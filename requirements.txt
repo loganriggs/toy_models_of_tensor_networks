@@ -1,0 +1,26 @@
+# Core dependencies
+--index-url https://download.pytorch.org/whl/cu124
+torch>=2.0.0
+torchvision
+torchaudio
+
+numpy>=1.24.0
+einops>=0.7.0
+# Data loading (required for real datasets)
+datasets>=2.14.0
+transformers>=4.30.0  # For tokenizers
+huggingface-hub>=0.16.0
+
+# Optional but recommended for better performance
+# Uncomment if you want to use the latest PyTorch nightly for best performance
+# --pre torch --index-url https://download.pytorch.org/whl/nightly/cu126
+
+# Training utilities
+tqdm>=4.65.0
+tensorboard>=2.13.0
+wandb>=0.15.0  # Optional: for experiment tracking
+
+# Development tools (optional)
+jupyter>=1.0.0
+matplotlib>=3.7.0
+pandas>=2.0.0
