@@ -226,13 +226,15 @@ class TransformerBlock(nn.Module):
         super().__init__()
         self.attn = QuadraticAttention(d_model, n_head, n_ctx)
         self.bilinear = BilinearLayer(d_model)
-        self.ln1 = nn.RMSNorm(d_model)
-        self.ln2 = nn.RMSNorm(d_model)
+        # self.ln1 = nn.RMSNorm(d_model)
+        # self.ln2 = nn.RMSNorm(d_model)
         self.dropout = nn.Dropout(dropout)
         
     def forward(self, x):
-        x = x + self.dropout(self.attn(self.ln1(x)))
-        x = x + self.dropout(self.bilinear(self.ln2(x)))
+        x = x + self.dropout(self.attn(x))
+        x = x + self.dropout(self.bilinear(x))
+        # x = x + self.dropout(self.attn(self.ln1(x)))
+        # x = x + self.dropout(self.bilinear(self.ln2(x)))
         return x
 
 
@@ -276,12 +278,12 @@ class ToyTransformer(nn.Module):
             num_layers = 2 if '2L' in config.model_type else 1
             for _ in range(num_layers):
                 layers.append(QuadraticAttention(config.d_model, config.n_head, config.n_ctx))
-                layers.append(nn.RMSNorm(config.d_model))
+                # layers.append(nn.RMSNorm(config.d_model))
         
         self.layers = nn.ModuleList(layers)
         
         # Output head
-        self.ln_f = nn.RMSNorm(config.d_model)
+        # self.ln_f = nn.RMSNorm(config.d_model)
         self.head = nn.Linear(config.d_model, config.vocab_size, bias=False)
         
         # Weight tying
@@ -299,7 +301,7 @@ class ToyTransformer(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
+    def forward(self, x):
         """
         Defines the forward pass for the model.
 
@@ -313,7 +315,7 @@ class ToyTransformer(nn.Module):
                 - loss (torch.Tensor or None): The cross-entropy loss if targets are provided.
         """
         # Token embeddings
-        x = self.embed(idx)
+        x = self.embed(x)
         x = self.dropout(x)
         
         # Forward through the layers
@@ -325,9 +327,9 @@ class ToyTransformer(nn.Module):
         logits = self.head(x)
         
         # Calculate loss if targets are provided
-        loss = None
-        if targets is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.reshape(-1))            
+        targets = batch[:, 1:]
+        logit_predictions = logits[:, :-1, :]
+        loss = F.cross_entropy(logit_predictions.view(-1, logit_predictions.size(-1)), targets.reshape(-1))            
         return logits, loss
 
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
@@ -487,7 +489,7 @@ class Trainer:
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
         return self.config.min_lr + coeff * (self.config.learning_rate - self.config.min_lr)
     
-    def train_step(self, x, y):
+    def train_step(self, batch):
         """Single training step"""
         # Set learning rate
         lr = self.get_lr()
@@ -495,7 +497,7 @@ class Trainer:
             param_group['lr'] = lr
             
         # Forward pass
-        logits, loss = self.model(x, y)
+        logits, loss = self.model(batch)
         
         # Backward pass
         self.optimizer.zero_grad()
@@ -539,7 +541,7 @@ class TrainingConfig:
     min_lr: float = 3e-4  # Don't decay to 0, following speedrun
     warmup_iters: int = 100
     lr_decay_iters: int = 5000
-    max_iters: int = 5000
+    max_epochs: int = 1
     grad_clip: float = 1.0
     
     # Logging
