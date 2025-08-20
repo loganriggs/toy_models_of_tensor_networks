@@ -315,6 +315,7 @@ class ToyTransformer(nn.Module):
                 - loss (torch.Tensor or None): The cross-entropy loss if targets are provided.
         """
         # Token embeddings
+        original_x = x
         x = self.embed(x)
         x = self.dropout(x)
         
@@ -327,9 +328,10 @@ class ToyTransformer(nn.Module):
         logits = self.head(x)
         
         # Calculate loss if targets are provided
-        targets = batch[:, 1:]
+        targets = original_x[:, 1:]
         logit_predictions = logits[:, :-1, :]
-        loss = F.cross_entropy(logit_predictions.view(-1, logit_predictions.size(-1)), targets.reshape(-1))            
+        # loss = F.cross_entropy(logit_predictions.view(-1, logit_predictions.size(-1)), targets.reshape(-1))            
+        loss = F.cross_entropy(logit_predictions.reshape(-1, logit_predictions.size(-1)), targets.reshape(-1))            
         return logits, loss
 
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
@@ -478,6 +480,7 @@ class Trainer:
         
         # Learning rate schedule with warmup and cooldown
         self.iteration = 0
+        self.total_iterations = None
         
     def get_lr(self):
         """Cosine learning rate schedule with warmup"""
@@ -492,7 +495,8 @@ class Trainer:
     def train_step(self, batch):
         """Single training step"""
         # Set learning rate
-        lr = self.get_lr()
+        # lr = self.get_lr()
+        lr = self.config.learning_rate
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = lr
             
