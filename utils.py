@@ -23,13 +23,14 @@ from typing import Optional, Literal
 import time
 from transformers import AutoTokenizer
 from datasets import load_dataset
+from torch.amp import autocast, GradScaler
+from transformers import AutoTokenizer, LlamaForCausalLM
 
 
 # ============================================================================
 # Muon Optimizer from modded-nanogpt
 # ============================================================================
 
-@torch.compile
 def zeroth_power_via_newtonschulz5(G, steps=5, eps=1e-7):
     """Newton-Schulz iteration for orthogonalization used in Muon."""
     assert len(G.shape) == 2
@@ -171,7 +172,7 @@ class QuadraticAttention(Component):
         self.o = nn.Linear(d_model, d_model, bias=False)
         init.zeros_(self.o.weight)
         
-    def forward(self, x):
+    def forward(self, x, attention_mask=None):
         q, k, v = [rearrange(op(x), '... (n_head d_head) -> ... n_head d_head', 
                             n_head=self.n_head) for op in [self.q, self.k, self.v]]
         
@@ -181,7 +182,14 @@ class QuadraticAttention(Component):
         # Quadratic scoring function
         scores = einsum(q, k, "... seq_q n_head d_head, ... seq_k n_head d_head -> ... n_head seq_q seq_k")
         pattern = self.mask((scores / self.d_head).square())
-        
+
+        # Apply attention mask if provided
+        if attention_mask is not None:
+            # Expand mask for heads: [batch, seq] -> [batch, 1, seq, seq]
+            attn_mask = attention_mask[:, None, None, :]  
+            # Set masked positions to 0 (since you're using quadratic, not softmax)
+            pattern = pattern * attn_mask
+            
         # Aggregate values
         z = einsum(pattern, v, "... n_head seq_q seq_k, ... seq_k n_head d_head -> ... seq_q n_head d_head")
         z = rearrange(z, '... seq n_head d_head -> ... seq (n_head d_head)')
@@ -230,8 +238,8 @@ class TransformerBlock(nn.Module):
         # self.ln2 = nn.RMSNorm(d_model)
         self.dropout = nn.Dropout(dropout)
         
-    def forward(self, x):
-        x = x + self.dropout(self.attn(x))
+    def forward(self, x, attention_mask=None):
+        x = x + self.dropout(self.attn(x, attention_mask))
         x = x + self.dropout(self.bilinear(x))
         # x = x + self.dropout(self.attn(self.ln1(x)))
         # x = x + self.dropout(self.bilinear(self.ln2(x)))
@@ -246,7 +254,8 @@ class TransformerBlock(nn.Module):
 # Assume these are defined elsewhere for a complete, runnable example
 @dataclass
 class ModelConfig:
-    vocab_size: int = 1000
+    # vocab_size = None
+    vocab_size: int = None
     d_model: int = 128
     n_ctx: int = 256
     n_head: int = 4
@@ -270,12 +279,16 @@ class ToyTransformer(nn.Module):
         
         # Build layers based on model type
         layers = []
+
+        # Extract number of layers from model_type (e.g., '3L' -> 3)
+        import re
+        layer_match = re.search(r'(\d+)L', config.model_type)
+        num_layers = int(layer_match.group(1)) if layer_match else 1
+
         if 'transformer' in config.model_type:
-            num_layers = 2 if '2L' in config.model_type else 1
             for _ in range(num_layers):
                 layers.append(TransformerBlock(config.d_model, config.n_head, config.n_ctx, config.dropout))
         elif 'attention_only' in config.model_type:
-            num_layers = 2 if '2L' in config.model_type else 1
             for _ in range(num_layers):
                 layers.append(QuadraticAttention(config.d_model, config.n_head, config.n_ctx))
                 # layers.append(nn.RMSNorm(config.d_model))
@@ -301,7 +314,7 @@ class ToyTransformer(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, x):
+    def forward(self, x, attention_mask=None):
         """
         Defines the forward pass for the model.
 
@@ -321,8 +334,11 @@ class ToyTransformer(nn.Module):
         
         # Forward through the layers
         for layer in self.layers:
-            x = layer(x)
-            
+            if isinstance(layer, (TransformerBlock, QuadraticAttention)):
+                x = layer(x, attention_mask)
+            else:
+                x = layer(x) 
+
         # Output projection
         # x = self.ln_f(x)
         logits = self.head(x)
@@ -330,8 +346,22 @@ class ToyTransformer(nn.Module):
         # Calculate loss if targets are provided
         targets = original_x[:, 1:]
         logit_predictions = logits[:, :-1, :]
-        # loss = F.cross_entropy(logit_predictions.view(-1, logit_predictions.size(-1)), targets.reshape(-1))            
-        loss = F.cross_entropy(logit_predictions.reshape(-1, logit_predictions.size(-1)), targets.reshape(-1))            
+        # loss = F.cross_entropy(logit_predictions.view(-1, logit_predictions.size(-1)), targets.reshape(-1))    
+                # Only calculate loss on non-padded positions if mask is provided
+        if attention_mask is not None:
+            # Shift mask to align with targets
+            target_mask = attention_mask[:, 1:]
+            loss = F.cross_entropy(
+                logit_predictions.reshape(-1, logit_predictions.size(-1)), 
+                targets.reshape(-1),
+                reduction='none'
+            )
+            loss = (loss * target_mask.reshape(-1)).sum() / target_mask.sum()
+        else:
+            loss = F.cross_entropy(
+                logit_predictions.reshape(-1, logit_predictions.size(-1)), 
+                targets.reshape(-1)
+            )         
         return logits, loss
 
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
@@ -391,10 +421,16 @@ class StreamingTextDataset:
         self.seq_length = seq_length
         self.validation_ratio = validation_ratio
         self.is_validation = (split == 'validation')
-        
+
         # Load streaming dataset
         # For FineWeb, we only have 'train' split available
-        actual_split = 'train' if 'fineweb' in dataset_name.lower() else split
+        # For SimpleStories, use 'test' for validation
+        if 'fineweb' in dataset_name.lower():
+            actual_split = 'train'
+        elif 'simplestories' in dataset_name.lower() and split == 'validation':
+            actual_split = 'test'
+        else:
+            actual_split = split
         
         if subset:
             self.dataset = load_dataset(dataset_name, subset, split=actual_split, streaming=True)
@@ -433,8 +469,17 @@ class StreamingTextDataset:
                 try:
                     # Get next text sample
                     sample = next(self.iterator)
-                    text = sample.get('text', sample.get('content', ''))
-                    
+                    text = sample.get('text', sample.get('content', sample.get('story', '')))
+
+                    # Check if we got empty text - this indicates a key mismatch
+                    if not text:
+                        print(f"\n=== DATASET KEY ERROR ===")
+                        print(f"Could not find text field in sample!")
+                        print(f"Available keys in sample: {list(sample.keys())}")
+                        print(f"Sample content: {sample}")
+                        import sys
+                        sys.exit(1)
+
                     # Tokenize and add to buffer
                     tokens = self.tokenizer.encode(text, truncation=False, add_special_tokens=False)
                     self.token_buffer.extend(tokens)
@@ -445,6 +490,16 @@ class StreamingTextDataset:
                         # Add some padding tokens if completely empty
                         self.token_buffer = [self.tokenizer.eos_token_id] * (self.seq_length + 1)
                         break
+                except Exception as e:
+                    print(f"\n=== UNEXPECTED ERROR IN get_batch ===")
+                    print(f"Error type: {type(e).__name__}")
+                    print(f"Error message: {e}")
+                    print(f"Sample keys: {list(sample.keys()) if 'sample' in locals() else 'sample not defined'}")
+                    print(f"Sample: {sample if 'sample' in locals() else 'sample not defined'}")
+                    import sys
+                    import traceback
+                    traceback.print_exc()
+                    sys.exit(1)
             
             # Extract sequence from buffer
             if len(self.token_buffer) >= self.seq_length + 1:
@@ -477,6 +532,7 @@ class Trainer:
             lr=config.learning_rate,
             momentum=config.momentum
         )
+        self.scaler = GradScaler()
         
         # Learning rate schedule with warmup and cooldown
         self.iteration = 0
@@ -492,28 +548,35 @@ class Trainer:
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
         return self.config.min_lr + coeff * (self.config.learning_rate - self.config.min_lr)
     
-    def train_step(self, batch):
+    def train_step(self, input_ids, attention_mask):
         """Single training step"""
         # Set learning rate
         # lr = self.get_lr()
         lr = self.config.learning_rate
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = lr
-            
+        
+        self.optimizer.zero_grad()
         # Forward pass
-        logits, loss = self.model(batch)
+        with autocast(device_type="cuda"):
+            _, loss = self.model(input_ids, attention_mask)
+        
+
         
         # Backward pass
         self.optimizer.zero_grad()
-        loss.backward()
+        self.scaler.scale(loss).backward()
         
         # Gradient clipping
         if self.config.grad_clip > 0:
+            # You must unscale gradients before clipping to clip the true gradient norm
+            self.scaler.unscale_(self.optimizer) 
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip)
-            
+               
         # Optimizer step
-        self.optimizer.step()
-        
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
+
         self.iteration += 1
         
         return loss.item(), lr
@@ -553,9 +616,7 @@ class TrainingConfig:
     log_interval: int = 10
 
 
-
-
-def visualize_prediction_error(model, tokenizer, text, device='cpu'):
+def visualize_prediction_error(model, tokenizer, text, pre_tokenized=False, device='cpu'):
     """
     Generates an HTML visualization of prediction loss with a clean white-to-red gradient
     and labeled legend bar from 0 to 7 (with saturation at 7).
@@ -570,11 +631,14 @@ def visualize_prediction_error(model, tokenizer, text, device='cpu'):
     model.to(device)
     model.eval()
     
-    tokens = tokenizer.encode(text, return_tensors='pt').to(device)
+    if pre_tokenized:
+        tokens = torch.tensor(text, dtype=torch.long, device=device).unsqueeze(0)
+    else:
+        tokens = tokenizer.encode(text, return_tensors='pt').to(device)
     
     # 2. Model Inference
     with torch.no_grad():
-        logits, _ = model(tokens, targets=tokens)
+        logits, _ = model(tokens)
 
     # 3. Calculate Per-Token Loss
     shift_logits = logits[..., :-1, :].contiguous()
@@ -597,8 +661,30 @@ def visualize_prediction_error(model, tokenizer, text, device='cpu'):
 
     # 5. Generate HTML for each token
     html_spans = []
-    decoded_tokens = [tokenizer.decode(t) for t in tokens[0]]
+    # decoded_tokens = [tokenizer.decode(t) for t in tokens[0]]
+    def get_token_strings_with_spaces(tokenizer, token_ids):
+        """Extract individual token strings with proper spacing preserved"""
+        if isinstance(token_ids, torch.Tensor):
+            token_ids = token_ids.tolist()
+        
+        decoded_tokens = []
+        for i in range(len(token_ids)):
+            # Decode up to and including current token
+            full_text = tokenizer.decode(token_ids[:i+1])
+            
+            if i == 0:
+                decoded_tokens.append(full_text)
+            else:
+                # Decode up to but not including current token
+                prev_text = tokenizer.decode(token_ids[:i])
+                # The difference is the current token's contribution (including any leading space)
+                decoded_tokens.append(full_text[len(prev_text):])
+        
+        return decoded_tokens
 
+    decoded_tokens = get_token_strings_with_spaces(tokenizer, tokens[0])
+    print(tokens)
+    print(decoded_tokens)
     for i, token_str in enumerate(decoded_tokens):
         token_loss = loss[i].item()
         # Clip the loss value to our range
@@ -614,35 +700,36 @@ def visualize_prediction_error(model, tokenizer, text, device='cpu'):
         # Clean up token display
         display_token = token_str
         
-        # Handle common tokenizer artifacts
-        display_token = display_token.replace('Ġ', ' ')  # GPT-2 style space
-        display_token = display_token.replace('▁', ' ')  # Sentencepiece style space
-        display_token = display_token.replace('Ċ', '\n')  # Newline representation
-        display_token = display_token.replace('ĉ', '\t')  # Tab representation
+#         # Handle common tokenizer artifacts
+#         display_token = display_token.replace('Ġ', ' ')  # GPT-2 style space
+#         display_token = display_token.replace('▁', ' ')  # Sentencepiece style space
+#         display_token = display_token.replace('Ċ', '\n')  # Newline representation
+#         display_token = display_token.replace('ĉ', '\t')  # Tab representation
         
-        # Handle special quote characters that tokenizers sometimes produce
-        display_token = display_token.replace('"', '"')
-        display_token = display_token.replace('"', '"')
-        display_token = display_token.replace(''', "'")
-        display_token = display_token.replace(''', "'")
-        display_token = display_token.replace('′', "'")
-        display_token = display_token.replace('´', "'")
-        display_token = display_token.replace('`', "'")
-        display_token = display_token.replace('â€™', "'")  # Mangled UTF-8 for apostrophe
-        display_token = display_token.replace('â€œ', '"')  # Mangled UTF-8 for left quote
-        display_token = display_token.replace('â€', '"')   # Mangled UTF-8 for right quote
+#         # Handle special quote characters that tokenizers sometimes produce
+#         display_token = display_token.replace('"', '"')
+#         display_token = display_token.replace('"', '"')
+#         display_token = display_token.replace(''', "'")
+#         display_token = display_token.replace(''', "'")
+#         display_token = display_token.replace('′', "'")
+#         display_token = display_token.replace('´', "'")
+#         display_token = display_token.replace('`', "'")
+#         display_token = display_token.replace('â€™', "'")  # Mangled UTF-8 for apostrophe
+#         display_token = display_token.replace('â€œ', '"')  # Mangled UTF-8 for left quote
+#         display_token = display_token.replace('â€', '"')   # Mangled UTF-8 for right quote
         
         
-        # HTML escape after replacements
-        escaped_token = display_token.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+#         # HTML escape after replacements
+#         escaped_token = display_token.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+        escaped_token = display_token
         
-        # Handle spaces and newlines for display
-        if escaped_token == ' ':
-            escaped_token = '&nbsp;'
-        elif escaped_token == '\n':
-            escaped_token = '↵'  # Use a return symbol for newlines
-        elif escaped_token == '':
-            escaped_token = '∅'  # Use empty set symbol for empty tokens
+#         # Handle spaces and newlines for display
+#         if escaped_token == ' ':
+#             escaped_token = '&nbsp;'
+#         elif escaped_token == '\n':
+#             escaped_token = '↵'  # Use a return symbol for newlines
+#         elif escaped_token == '':
+#             escaped_token = '∅'  # Use empty set symbol for empty tokens
         
         # Preserve leading/trailing spaces
         escaped_token = escaped_token.replace(' ', '&nbsp;')

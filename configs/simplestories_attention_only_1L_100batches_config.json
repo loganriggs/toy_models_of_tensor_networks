@@ -1,0 +1,13 @@
+{
+  "vocab_size": 4096,
+  "d_model": 512,
+  "n_ctx": 512,
+  "n_head": 8,
+  "dropout": 0.1,
+  "model_type": "attention_only_1L",
+  "num_batches": 100,
+  "final_train_loss": 6.828333854675293,
+  "final_val_loss": 7.330522251129151,
+  "learning_rate": 0.003,
+  "batch_size": 16
+}

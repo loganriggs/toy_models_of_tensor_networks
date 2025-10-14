@@ -1,0 +1,1 @@
+{"vocab_size": 4096, "d_model": 512, "n_ctx": 512, "n_head": 8, "dropout": 0.1, "model_type": "attention_only_1L"}
