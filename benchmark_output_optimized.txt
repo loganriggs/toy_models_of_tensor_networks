@@ -1,0 +1,457 @@
+Using device: cuda
+
+Loading base model...
+Model config: config.d_model=512, config.n_head=8, model_type=transformer_3L
+
+
+
+
+================================================================================
+TESTING ESTIMATOR: REINMAX
+================================================================================
+
+================================================================================
+EQUIVALENCE VERIFICATION (estimator=reinmax)
+================================================================================
+
+Testing with batch_size=1
+
+  Sample logits (first 5 values):
+    Current: tensor([-0.9344, -0.9401,  5.8730,  3.2520, -0.7643], device='cuda:0')
+    Loop:    tensor([-0.9344, -0.9401,  5.8730,  3.2520, -0.7643], device='cuda:0')
+    Einsum:  tensor([-0.9344, -0.9401,  5.8730,  3.2520, -0.7643], device='cuda:0')
+    BMM:     tensor([-0.9344, -0.9401,  5.8730,  3.2520, -0.7643], device='cuda:0')
+    VMAP:    tensor([-0.9344, -0.9401,  5.8730,  3.2520, -0.7643], device='cuda:0')
+
+Forward pass output comparison:
+  Current vs Loop:   max_diff = 0.00e+00
+  Current vs Einsum: max_diff = 0.00e+00
+  Current vs BMM:    max_diff = 0.00e+00
+  Current vs VMAP:   max_diff = 0.00e+00
+
+  Tolerance: 1.00e-04
+  Loop:   ✓ PASS
+  Einsum: ✓ PASS
+  BMM:    ✓ PASS
+  VMAP:   ✓ PASS
+
+================================================================================
+✓ ALL IMPLEMENTATIONS PRODUCE EQUIVALENT RESULTS
+================================================================================
+
+================================================================================
+EQUIVALENCE VERIFICATION (estimator=reinmax)
+================================================================================
+
+Testing with batch_size=2
+
+  Sample logits (first 5 values):
+    Current: tensor([-0.4131, -0.3751,  2.9992,  1.5262, -0.5006], device='cuda:0')
+    Loop:    tensor([-0.4131, -0.3751,  2.9992,  1.5262, -0.5006], device='cuda:0')
+    Einsum:  tensor([-0.4131, -0.3751,  2.9992,  1.5262, -0.5006], device='cuda:0')
+    BMM:     tensor([-0.4131, -0.3751,  2.9992,  1.5262, -0.5006], device='cuda:0')
+    VMAP:    tensor([-0.4131, -0.3751,  2.9992,  1.5262, -0.5006], device='cuda:0')
+
+Forward pass output comparison:
+  Current vs Loop:   max_diff = 0.00e+00
+  Current vs Einsum: max_diff = 2.29e-05
+  Current vs BMM:    max_diff = 2.29e-05
+  Current vs VMAP:   max_diff = 2.29e-05
+
+  Tolerance: 1.00e-04
+  Loop:   ✓ PASS
+  Einsum: ✓ PASS
+  BMM:    ✓ PASS
+  VMAP:   ✓ PASS
+
+================================================================================
+✓ ALL IMPLEMENTATIONS PRODUCE EQUIVALENT RESULTS
+================================================================================
+
+
+================================================================================
+TESTING ESTIMATOR: STE
+================================================================================
+
+================================================================================
+EQUIVALENCE VERIFICATION (estimator=ste)
+================================================================================
+
+Testing with batch_size=1
+
+  Sample logits (first 5 values):
+    Current: tensor([-0.4131, -0.3751,  2.9992,  1.5262, -0.5006], device='cuda:0')
+    Loop:    tensor([-0.4131, -0.3751,  2.9992,  1.5262, -0.5006], device='cuda:0')
+    Einsum:  tensor([-0.4131, -0.3751,  2.9992,  1.5262, -0.5006], device='cuda:0')
+    BMM:     tensor([-0.4131, -0.3751,  2.9992,  1.5262, -0.5006], device='cuda:0')
+    VMAP:    tensor([-0.4131, -0.3751,  2.9992,  1.5262, -0.5006], device='cuda:0')
+
+Forward pass output comparison:
+  Current vs Loop:   max_diff = 0.00e+00
+  Current vs Einsum: max_diff = 0.00e+00
+  Current vs BMM:    max_diff = 0.00e+00
+  Current vs VMAP:   max_diff = 0.00e+00
+
+  Tolerance: 1.00e-04
+  Loop:   ✓ PASS
+  Einsum: ✓ PASS
+  BMM:    ✓ PASS
+  VMAP:   ✓ PASS
+
+================================================================================
+✓ ALL IMPLEMENTATIONS PRODUCE EQUIVALENT RESULTS
+================================================================================
+
+================================================================================
+EQUIVALENCE VERIFICATION (estimator=ste)
+================================================================================
+
+Testing with batch_size=2
+
+  Sample logits (first 5 values):
+    Current: tensor([-0.4131, -0.3751,  2.9992,  1.5262, -0.5006], device='cuda:0')
+    Loop:    tensor([-0.4131, -0.3751,  2.9992,  1.5262, -0.5006], device='cuda:0')
+    Einsum:  tensor([-0.4131, -0.3751,  2.9992,  1.5262, -0.5006], device='cuda:0')
+    BMM:     tensor([-0.4131, -0.3751,  2.9992,  1.5262, -0.5006], device='cuda:0')
+    VMAP:    tensor([-0.4131, -0.3751,  2.9992,  1.5262, -0.5006], device='cuda:0')
+
+Forward pass output comparison:
+  Current vs Loop:   max_diff = 0.00e+00
+  Current vs Einsum: max_diff = 2.29e-05
+  Current vs BMM:    max_diff = 2.29e-05
+  Current vs VMAP:   max_diff = 2.29e-05
+
+  Tolerance: 1.00e-04
+  Loop:   ✓ PASS
+  Einsum: ✓ PASS
+  BMM:    ✓ PASS
+  VMAP:   ✓ PASS
+
+================================================================================
+✓ ALL IMPLEMENTATIONS PRODUCE EQUIVALENT RESULTS
+================================================================================
+
+================================================================================
+BENCHMARK RESULTS
+================================================================================
+
+================================================================================
+ESTIMATOR: REINMAX
+================================================================================
+
+================================================================================
+Batch Size: 1
+================================================================================
+
+1. Current (batch_size=1)...
+   Forward: 1.47 ± 0.06 ms
+   Backward: 2.06 ± 0.09 ms
+   Total: 3.53 ms
+   Memory: 68.07 MB
+
+2. Loop (batch_size=1)...
+   Forward: 1.52 ± 0.05 ms
+   Backward: 1.60 ± 0.09 ms
+   Total: 3.12 ms
+   Memory: 68.07 MB
+
+3. Einsum (batch_size=1)...
+   Forward: 1.53 ± 0.11 ms
+   Backward: 1.62 ± 0.09 ms
+   Total: 3.14 ms
+   Memory: 68.07 MB
+
+4. BMM (batch_size=1)...
+   Forward: 1.49 ± 0.04 ms
+   Backward: 1.63 ± 0.05 ms
+   Total: 3.11 ms
+   Memory: 68.07 MB
+
+5. VMAP (batch_size=1)...
+   Forward: 1.66 ± 0.10 ms
+   Backward: 1.68 ± 0.06 ms
+   Total: 3.34 ms
+   Memory: 68.07 MB
+
+
+================================================================================
+Batch Size: 2
+================================================================================
+
+2. Loop (batch_size=2)...
+   Forward: 2.66 ± 0.08 ms
+   Backward: 2.78 ± 0.09 ms
+   Total: 5.43 ms
+   Memory: 80.07 MB
+
+3. Einsum (batch_size=2)...
+   Forward: 1.92 ± 0.05 ms
+   Backward: 1.99 ± 0.03 ms
+   Total: 3.91 ms
+   Memory: 80.07 MB
+
+4. BMM (batch_size=2)...
+   Forward: 1.92 ± 0.04 ms
+   Backward: 1.91 ± 0.07 ms
+   Total: 3.82 ms
+   Memory: 80.07 MB
+
+5. VMAP (batch_size=2)...
+   Forward: 1.95 ± 0.06 ms
+   Backward: 1.99 ± 0.08 ms
+   Total: 3.94 ms
+   Memory: 80.07 MB
+
+
+================================================================================
+Batch Size: 8
+================================================================================
+
+2. Loop (batch_size=8)...
+   Forward: 9.53 ± 0.07 ms
+   Backward: 11.01 ± 0.26 ms
+   Total: 20.54 ms
+   Memory: 152.07 MB
+
+3. Einsum (batch_size=8)...
+   Forward: 4.78 ± 0.30 ms
+   Backward: 6.26 ± 0.22 ms
+   Total: 11.04 ms
+   Memory: 152.07 MB
+
+4. BMM (batch_size=8)...
+   Forward: 4.81 ± 0.34 ms
+   Backward: 6.20 ± 0.28 ms
+   Total: 11.00 ms
+   Memory: 152.07 MB
+
+5. VMAP (batch_size=8)...
+   Forward: 4.68 ± 0.28 ms
+   Backward: 6.28 ± 0.27 ms
+   Total: 10.95 ms
+   Memory: 152.07 MB
+
+
+================================================================================
+Batch Size: 16
+================================================================================
+
+2. Loop (batch_size=16)...
+   Forward: 19.35 ± 0.33 ms
+   Backward: 32.77 ± 1.53 ms
+   Total: 52.12 ms
+   Memory: 248.07 MB
+
+3. Einsum (batch_size=16)...
+   Forward: 9.00 ± 0.34 ms
+   Backward: 13.18 ± 0.85 ms
+   Total: 22.18 ms
+   Memory: 248.07 MB
+
+4. BMM (batch_size=16)...
+   Forward: 8.98 ± 0.33 ms
+   Backward: 13.09 ± 0.48 ms
+   Total: 22.07 ms
+   Memory: 248.07 MB
+
+5. VMAP (batch_size=16)...
+   Forward: 8.91 ± 0.25 ms
+   Backward: 13.21 ± 0.44 ms
+   Total: 22.13 ms
+   Memory: 248.07 MB
+
+
+================================================================================
+ESTIMATOR: STE
+================================================================================
+
+================================================================================
+Batch Size: 1
+================================================================================
+
+1. Current (batch_size=1)...
+   Forward: 1.53 ± 0.04 ms
+   Backward: 1.46 ± 0.12 ms
+   Total: 2.99 ms
+   Memory: 68.07 MB
+
+2. Loop (batch_size=1)...
+   Forward: 1.53 ± 0.09 ms
+   Backward: 1.50 ± 0.05 ms
+   Total: 3.03 ms
+   Memory: 68.07 MB
+
+3. Einsum (batch_size=1)...
+   Forward: 1.59 ± 0.08 ms
+   Backward: 1.58 ± 0.11 ms
+   Total: 3.17 ms
+   Memory: 68.07 MB
+
+4. BMM (batch_size=1)...
+   Forward: 1.58 ± 0.10 ms
+   Backward: 1.47 ± 0.15 ms
+   Total: 3.05 ms
+   Memory: 68.07 MB
+
+5. VMAP (batch_size=1)...
+   Forward: 1.80 ± 0.12 ms
+   Backward: 1.55 ± 0.16 ms
+   Total: 3.35 ms
+   Memory: 68.07 MB
+
+
+================================================================================
+Batch Size: 2
+================================================================================
+
+2. Loop (batch_size=2)...
+   Forward: 3.05 ± 0.24 ms
+   Backward: 2.83 ± 0.18 ms
+   Total: 5.88 ms
+   Memory: 80.07 MB
+
+3. Einsum (batch_size=2)...
+   Forward: 1.94 ± 0.05 ms
+   Backward: 1.87 ± 0.07 ms
+   Total: 3.81 ms
+   Memory: 80.07 MB
+
+4. BMM (batch_size=2)...
+   Forward: 1.93 ± 0.06 ms
+   Backward: 1.83 ± 0.05 ms
+   Total: 3.76 ms
+   Memory: 80.07 MB
+
+5. VMAP (batch_size=2)...
+   Forward: 1.99 ± 0.07 ms
+   Backward: 1.77 ± 0.10 ms
+   Total: 3.76 ms
+   Memory: 80.07 MB
+
+
+================================================================================
+Batch Size: 8
+================================================================================
+
+2. Loop (batch_size=8)...
+   Forward: 10.13 ± 0.28 ms
+   Backward: 10.80 ± 0.23 ms
+   Total: 20.93 ms
+   Memory: 152.07 MB
+
+3. Einsum (batch_size=8)...
+   Forward: 4.92 ± 0.31 ms
+   Backward: 5.13 ± 0.24 ms
+   Total: 10.05 ms
+   Memory: 152.07 MB
+
+4. BMM (batch_size=8)...
+   Forward: 4.85 ± 0.27 ms
+   Backward: 5.08 ± 0.29 ms
+   Total: 9.92 ms
+   Memory: 152.07 MB
+
+5. VMAP (batch_size=8)...
+   Forward: 4.78 ± 0.27 ms
+   Backward: 4.91 ± 0.42 ms
+   Total: 9.69 ms
+   Memory: 152.07 MB
+
+
+================================================================================
+Batch Size: 16
+================================================================================
+
+2. Loop (batch_size=16)...
+   Forward: 19.93 ± 0.28 ms
+   Backward: 31.26 ± 0.97 ms
+   Total: 51.20 ms
+   Memory: 248.07 MB
+
+3. Einsum (batch_size=16)...
+   Forward: 8.98 ± 0.23 ms
+   Backward: 9.63 ± 0.34 ms
+   Total: 18.61 ms
+   Memory: 248.07 MB
+
+4. BMM (batch_size=16)...
+   Forward: 9.06 ± 0.37 ms
+   Backward: 9.44 ± 0.27 ms
+   Total: 18.50 ms
+   Memory: 248.07 MB
+
+5. VMAP (batch_size=16)...
+   Forward: 8.81 ± 0.42 ms
+   Backward: 9.27 ± 0.45 ms
+   Total: 18.07 ms
+   Memory: 248.07 MB
+
+
+================================================================================
+SUMMARY COMPARISON
+================================================================================
+
+
+================================================================================
+ESTIMATOR: REINMAX
+================================================================================
+
+Baseline (Current, batch=1): 3.53 ms
+
+Batch size 1 comparisons:
+  Current             :   3.53 ms  (speedup: 1.00x)
+  Loop                :   3.12 ms  (speedup: 1.13x)
+  Einsum              :   3.14 ms  (speedup: 1.12x)
+  BMM                 :   3.11 ms  (speedup: 1.13x)
+  VMAP                :   3.34 ms  (speedup: 1.06x)
+
+Batch size 2 comparisons:
+  Loop                :   5.43 ms  (per-sample speedup: 1.30x)
+  Einsum              :   3.91 ms  (per-sample speedup: 1.81x)
+  BMM                 :   3.82 ms  (per-sample speedup: 1.85x)
+  VMAP                :   3.94 ms  (per-sample speedup: 1.79x)
+
+Batch size 8 comparisons:
+  Loop                :  20.54 ms  (per-sample speedup: 1.37x)
+  Einsum              :  11.04 ms  (per-sample speedup: 2.56x)
+  BMM                 :  11.00 ms  (per-sample speedup: 2.57x)
+  VMAP                :  10.95 ms  (per-sample speedup: 2.58x)
+
+Batch size 16 comparisons:
+  Loop                :  52.12 ms  (per-sample speedup: 1.08x)
+  Einsum              :  22.18 ms  (per-sample speedup: 2.55x)
+  BMM                 :  22.07 ms  (per-sample speedup: 2.56x)
+  VMAP                :  22.13 ms  (per-sample speedup: 2.55x)
+
+================================================================================
+ESTIMATOR: STE
+================================================================================
+
+Baseline (Current, batch=1): 2.99 ms
+
+Batch size 1 comparisons:
+  Current             :   2.99 ms  (speedup: 1.00x)
+  Loop                :   3.03 ms  (speedup: 0.99x)
+  Einsum              :   3.17 ms  (speedup: 0.94x)
+  BMM                 :   3.05 ms  (speedup: 0.98x)
+  VMAP                :   3.35 ms  (speedup: 0.89x)
+
+Batch size 2 comparisons:
+  Loop                :   5.88 ms  (per-sample speedup: 1.02x)
+  Einsum              :   3.81 ms  (per-sample speedup: 1.57x)
+  BMM                 :   3.76 ms  (per-sample speedup: 1.59x)
+  VMAP                :   3.76 ms  (per-sample speedup: 1.59x)
+
+Batch size 8 comparisons:
+  Loop                :  20.93 ms  (per-sample speedup: 1.14x)
+  Einsum              :  10.05 ms  (per-sample speedup: 2.38x)
+  BMM                 :   9.92 ms  (per-sample speedup: 2.41x)
+  VMAP                :   9.69 ms  (per-sample speedup: 2.47x)
+
+Batch size 16 comparisons:
+  Loop                :  51.20 ms  (per-sample speedup: 0.94x)
+  Einsum              :  18.61 ms  (per-sample speedup: 2.57x)
+  BMM                 :  18.50 ms  (per-sample speedup: 2.59x)
+  VMAP                :  18.07 ms  (per-sample speedup: 2.65x)
+
+================================================================================

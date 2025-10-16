@@ -178,13 +178,16 @@ class MaskedTransformer(torch.nn.Module):
             MW2 = W2.unsqueeze(0) * m2  # [B, M, D]
             MWd = Wd.unsqueeze(0) * md  # [B, D, M]
 
-            # Batched matmul: einsum 'bmd,bsd->bsm' = h @ MW.T for each batch
-            z1 = torch.einsum('bmd,bsd->bsm', MW1, h) + b1  # [B, S, M]
-            z2 = torch.einsum('bmd,bsd->bsm', MW2, h) + b2  # [B, S, M]
-            mlp_hidden = z1 * z2  # [B, S, M]
+            # Transpose ONCE and materialize contiguous layout
+            MW1_T = MW1.transpose(1, 2).contiguous()  # [B, D, M]
+            MW2_T = MW2.transpose(1, 2).contiguous()  # [B, D, M]
+            MWd_T = MWd.transpose(1, 2).contiguous()  # [B, M, D]
 
-            # Down projection
-            output = torch.einsum('bdm,bsm->bsd', MWd, mlp_hidden) + bd  # [B, S, D]
+            # Reuse transposed tensors
+            z1 = torch.matmul(h, MW1_T) + b1  # [B, S, M]
+            z2 = torch.matmul(h, MW2_T) + b2  # [B, S, M]
+            mlp_hidden = z1 * z2  # [B, S, M]
+            output = torch.matmul(mlp_hidden, MWd_T) + bd  # [B, S, D]
 
         elif self.mode == 'bmm':
             # Batch dimension with batched matmul
@@ -192,13 +195,16 @@ class MaskedTransformer(torch.nn.Module):
             MW2 = W2.unsqueeze(0) * m2  # [B, M, D]
             MWd = Wd.unsqueeze(0) * md  # [B, D, M]
 
-            # Batched matmul: [B, S, D] @ [B, D, M] -> [B, S, M]
-            z1 = torch.matmul(h, MW1.transpose(1, 2)) + b1
-            z2 = torch.matmul(h, MW2.transpose(1, 2)) + b2
-            mlp_hidden = z1 * z2  # [B, S, M]
+            # Transpose ONCE and materialize contiguous layout
+            MW1_T = MW1.transpose(1, 2).contiguous()  # [B, D, M]
+            MW2_T = MW2.transpose(1, 2).contiguous()  # [B, D, M]
+            MWd_T = MWd.transpose(1, 2).contiguous()  # [B, M, D]
 
-            # Down projection: [B, S, M] @ [B, M, D] -> [B, S, D]
-            output = torch.matmul(mlp_hidden, MWd.transpose(1, 2)) + bd
+            # Reuse transposed tensors
+            z1 = torch.matmul(h, MW1_T) + b1  # [B, S, M]
+            z2 = torch.matmul(h, MW2_T) + b2  # [B, S, M]
+            mlp_hidden = z1 * z2  # [B, S, M]
+            output = torch.matmul(mlp_hidden, MWd_T) + bd  # [B, S, D]
 
         elif self.mode == 'vmap':
             # Batch dimension with vmap
