@@ -225,12 +225,16 @@ def save_trained_masks(masked_model, target_sparsity, sample_idx, output_dir='ou
 
 
 def train_sparse_mask(teacher_model, data, attention_mask, target_sparsity,
-                      device='cuda', max_steps=10_000, lr=0.01,
-                      early_stop_patience=10_000, use_ce_diff=False):
+                      device='cuda', max_steps=2_000, lr=0.1,
+                      early_stop_patience=500, use_ce_diff=False,
+                      adaptive_lambda=False, target_metric_value=None):
     """Train sparse masks using ReinMax with early stopping
 
     Args:
         use_ce_diff: If True, use CE diff as main loss instead of KL divergence
+        adaptive_lambda: If True, automatically adjust lambda during training to meet target
+        target_metric_value: Target value for CE_diff or KL (depending on use_ce_diff)
+                           Only used if adaptive_lambda=True
     """
 
     masked_model = MaskedTransformer(teacher_model, mask_layer_idx=0).to(device)
@@ -325,6 +329,7 @@ def train_sparse_mask(teacher_model, data, attention_mask, target_sparsity,
     total_losses = []
     actual_sparsities = []
     steps_recorded = []
+    lambda_values = []  # Track lambda over time
 
     # Track gradients
     grad_proj1_norms = []
@@ -334,6 +339,24 @@ def train_sparse_mask(teacher_model, data, attention_mask, target_sparsity,
     # Early stopping based on mask changes
     prev_masks = None
     unchanged_steps = 0
+
+    # Adaptive lambda parameters
+    if adaptive_lambda:
+        current_lambda = target_sparsity  # Start with initial value
+        lambda_update_interval = 50  # Adjust lambda every N steps
+        lambda_increase_factor = 1.50  # 5% increase
+        lambda_decrease_factor = 0.80  # 5% decrease
+        # Determine which metric to track
+        if use_ce_diff or target_metric_value is not None:
+            target_threshold = target_metric_value if target_metric_value is not None else 0.01
+            metric_name = "CE_diff"
+        else:
+            # Default to KL if not using CE diff
+            target_threshold = target_metric_value if target_metric_value is not None else 0.1
+            metric_name = "KL"
+        print(f"    Adaptive lambda enabled: targeting {metric_name} ≤ {target_threshold:.4f}")
+    else:
+        current_lambda = target_sparsity
 
     # Check KL divergence at step 0 (before training)
     masked_model.eval()
@@ -418,7 +441,7 @@ def train_sparse_mask(teacher_model, data, attention_mask, target_sparsity,
         else:
             main_loss = kl_loss
 
-        loss = main_loss + target_sparsity * sparsity_loss
+        loss = main_loss + current_lambda * sparsity_loss
 
         loss.backward()
 
@@ -440,6 +463,27 @@ def train_sparse_mask(teacher_model, data, attention_mask, target_sparsity,
         # ], max_norm=0.1)
 
         optimizer.step()
+
+        # Adaptive lambda adjustment
+        if adaptive_lambda and step % lambda_update_interval == 0 and step > warmup_steps:
+            with torch.no_grad():
+                # Calculate current metric value
+                ce_diff = ce_loss.item() - teacher_ce
+                current_metric = ce_diff if metric_name == "CE_diff" else kl_loss.item()
+
+                # Adjust lambda based on whether we're meeting the target
+                old_lambda = current_lambda
+                if current_metric > target_threshold:
+                    # Performance is too degraded, decrease lambda (less sparsity)
+                    current_lambda *= lambda_decrease_factor
+                elif current_metric < target_threshold*0.5:
+                    # Performance is much better than needed, increase lambda (more sparsity)
+                    current_lambda *= lambda_increase_factor
+                # else: keep lambda stable (we're in the sweet spot)
+
+                # Log lambda changes
+              #   if abs(current_lambda - old_lambda) > 1e-6:
+              #       print(f"\n    Step {step}: {metric_name}={current_metric:.4f}, λ: {old_lambda:.2e} → {current_lambda:.2e}")
 
         # Check for mask changes (early stopping)
         with torch.no_grad():
@@ -475,6 +519,7 @@ def train_sparse_mask(teacher_model, data, attention_mask, target_sparsity,
             total_losses.append(loss.item())
             actual_sparsities.append(current_sparsity)
             steps_recorded.append(step)
+            lambda_values.append(current_lambda)  # Track lambda over time
 
         if step % 50 == 0:
             ce_diff = ce_loss.item() - teacher_ce
@@ -499,6 +544,10 @@ def train_sparse_mask(teacher_model, data, attention_mask, target_sparsity,
             # Show learning rate during warmup
             if step < warmup_steps:
                 postfix_dict['lr'] = f'{current_lr:.2e}'
+
+            # Always show current lambda
+            postfix_dict['λ'] = f'{current_lambda:.2e}'
+
             pbar.set_postfix(postfix_dict)
 
     # Final evaluation
@@ -543,7 +592,10 @@ def train_sparse_mask(teacher_model, data, attention_mask, target_sparsity,
         'grad_proj1_norms': grad_proj1_norms,
         'grad_proj2_norms': grad_proj2_norms,
         'grad_down_norms': grad_down_norms,
-        'lambda': target_sparsity
+        'lambda': target_sparsity,
+        'lambda_values': lambda_values,  # Track lambda over time (for adaptive)
+        'final_lambda': current_lambda,  # Final lambda value
+        'adaptive_lambda': adaptive_lambda  # Whether adaptive lambda was used
     }
 
     return masked_model, final_kl, final_ce_diff, actual_sparsity, history
@@ -778,6 +830,14 @@ def main():
                        help='Debug mode: only run first lambda value with 1 sample')
     parser.add_argument('--use-ce-diff', action='store_true',
                        help='Use CE diff as main loss instead of KL divergence')
+    parser.add_argument('--adaptive-lambda', action='store_true',
+                       help='Enable adaptive lambda adjustment during training')
+    parser.add_argument('--target-ce-diff', type=float, default=0.01,
+                       help='Target CE difference threshold for adaptive lambda (default: 0.01)')
+    parser.add_argument('--target-kl', type=float, default=None,
+                       help='Target KL divergence threshold for adaptive lambda (overrides --target-ce-diff if set)')
+    parser.add_argument('--initial-lambda', type=float, default=100.0,
+                       help='Initial lambda value for adaptive training (default: 100.0)')
     args = parser.parse_args()
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -830,15 +890,27 @@ def main():
             teacher_losses.append(loss.item())
     print(f"Teacher loss (mean): {np.mean(teacher_losses):.4f} ± {np.std(teacher_losses):.4f}\n")
 
-    # Run sparsity sweep with larger lambda values
-    # if args.debug:
-    #     sparsity_levels = [0.0]
-    # else:
-    sparsity_levels = [1e-1, 1.0, 10.0, 100.0, 1_000.0, 10_000.0]
-    sparsity_levels = [100.0]
-    # sparsity_levels = [0.5, 50, 500]
-    # sparsity_levels = [1e6]
-    # sparsity_levels = [500]
+    # Run sparsity sweep with larger lambda values (or use adaptive lambda)
+    if args.adaptive_lambda:
+        # For adaptive lambda, we only need one "sparsity level" (the initial lambda)
+        sparsity_levels = [args.initial_lambda]
+        # Determine target metric value
+        target_metric = args.target_kl if args.target_kl is not None else args.target_ce_diff
+        print(f"Using adaptive lambda with initial λ={args.initial_lambda:.1e}")
+        if args.target_kl is not None:
+            print(f"Target: KL ≤ {args.target_kl:.4f}")
+        else:
+            print(f"Target: CE_diff ≤ {args.target_ce_diff:.4f}")
+    else:
+        # if args.debug:
+        #     sparsity_levels = [0.0]
+        # else:
+        sparsity_levels = [1e-1, 1.0, 10.0, 100.0, 1_000.0, 10_000.0]
+        sparsity_levels = [100.0]
+        # sparsity_levels = [0.5, 50, 500]
+        # sparsity_levels = [1e6]
+        # sparsity_levels = [500]
+        target_metric = None
 
     # Store results across all samples
     all_sample_results = {
@@ -874,11 +946,13 @@ def main():
 
             masked_model, kl_div, ce_diff, actual_sparsity, history = train_sparse_mask(
                 teacher_model, data, attention_mask, target_sparsity,
-                device=device, max_steps=10_000, lr=0.001,
-                # device=device, max_steps=5000, lr=0.01,
-                # device=device, max_steps=2000, lr=0.01,
-                early_stop_patience=10_000,
-                use_ce_diff=args.use_ce_diff
+              #   device=device, max_steps=10_000, lr=0.001,
+              #   device=device, max_steps=3000, lr=0.01,
+                device=device, max_steps=3000, lr=0.01,
+                early_stop_patience=500,
+                use_ce_diff=args.use_ce_diff,
+                adaptive_lambda=args.adaptive_lambda,
+                target_metric_value=target_metric
             )
 
             kl_results.append(kl_div)
@@ -901,6 +975,8 @@ def main():
             verified_sparsity_results.append(threshold_sparsity)
 
             print(f"    Sparsity={actual_sparsity:.2%}, KL={kl_div:.4f}, CE_diff={ce_diff:+.4f}")
+            if args.adaptive_lambda:
+                print(f"    Final λ={history['final_lambda']:.2e}")
             print(f"    Verified: Sparsity={threshold_sparsity:.2%}, "
                   f"KL={verified_kl:.4f}, CE_diff={verified_ce_diff:+.4f}")
 
