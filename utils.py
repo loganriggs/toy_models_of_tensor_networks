@@ -209,35 +209,113 @@ class BilinearLayer(nn.Module):
     def __init__(self, d_model, d_hidden=None, bias=True):
         super().__init__()
         d_hidden = d_hidden or 4 * d_model
-        
+
         # Two parallel projections to hidden dimension
         self.proj1 = nn.Linear(d_model, d_hidden, bias=bias)
         self.proj2 = nn.Linear(d_model, d_hidden, bias=bias)
-        
+
         # Output projection
         self.down = nn.Linear(d_hidden, d_model, bias=bias)
-        
+
         # Zero-initialize down projection for stability
         init.zeros_(self.down.weight)
         if bias:
             init.zeros_(self.down.bias)
-            
+
     def forward(self, x):
         # Compute two parallel projections and multiply element-wise
         hidden = self.proj1(x) * self.proj2(x)
         return self.down(hidden)
 
 
-class TransformerBlock(nn.Module):
-    """Single transformer block with quadratic attention and bilinear layer"""
-    def __init__(self, d_model, n_head, n_ctx, dropout=0.0):
+class BilinearMixer(nn.Module):
+    """
+    Bilinear MLP-Mixer for sequence mixing.
+
+    For each position i, computes:
+        out[i] = sum over heads of (L[i,:] @ x) * (R[i,:] @ x)
+
+    where L and R are lower-triangular for causal masking.
+
+    With r heads, the interaction matrix at position i has rank r.
+    """
+
+    def __init__(
+        self,
+        seq_len: int,
+        d_model: int,
+        r: int = 1,
+        causal: bool = True
+    ):
         super().__init__()
-        self.attn = QuadraticAttention(d_model, n_head, n_ctx)
+        self.seq_len = seq_len
+        self.d_model = d_model
+        self.r = r
+        self.causal = causal
+
+        # L and R matrices for each head
+        self.L = nn.Parameter(torch.empty(r, seq_len, seq_len))
+        self.R = nn.Parameter(torch.empty(r, seq_len, seq_len))
+
+        # Output projection to combine heads
+        self.out_proj = nn.Linear(d_model * r, d_model, bias=False)
+
+        # Causal mask
+        if causal:
+            self.register_buffer('mask', torch.tril(torch.ones(seq_len, seq_len)))
+
+        self._init_weights()
+
+    def _init_weights(self):
+        # Small init to keep outputs stable at start
+        nn.init.normal_(self.L, std=0.02)
+        nn.init.normal_(self.R, std=0.02)
+        nn.init.zeros_(self.out_proj.weight)
+
+    def forward(self, x, attention_mask=None):
+        """
+        Args:
+            x: (B, S, D) where S <= seq_len
+            attention_mask: Optional attention mask (not used, for compatibility)
+        Returns:
+            out: (B, S, D)
+        """
+        B, S, D = x.shape
+
+        L, R = self.L[:, :S, :S], self.R[:, :S, :S]
+
+        # Apply causal mask
+        if self.causal:
+            mask = self.mask[:S, :S]
+            L = L * mask
+            R = R * mask
+
+        # Bilinear mixing: (B, r, S, D)
+        left = torch.einsum('rij,bjd->brid', L, x)
+        right = torch.einsum('rij,bjd->brid', R, x)
+        mixed = left * right
+
+        # Combine heads: (B, S, r*D) -> (B, S, D)
+        mixed = mixed.permute(0, 2, 1, 3).reshape(B, S, self.r * D)
+        out = self.out_proj(mixed)
+
+        return x + out
+
+
+class TransformerBlock(nn.Module):
+    """Single transformer block with quadratic attention (or mixer) and bilinear layer"""
+    def __init__(self, d_model, n_head, n_ctx, dropout=0.0, use_mixer=False, mixer_r=None):
+        super().__init__()
+        if use_mixer:
+            r = mixer_r if mixer_r is not None else n_head
+            self.attn = BilinearMixer(seq_len=n_ctx, d_model=d_model, r=r, causal=True)
+        else:
+            self.attn = QuadraticAttention(d_model, n_head, n_ctx)
         self.bilinear = BilinearLayer(d_model)
         # self.ln1 = nn.RMSNorm(d_model)
         # self.ln2 = nn.RMSNorm(d_model)
         self.dropout = nn.Dropout(dropout)
-        
+
     def forward(self, x, attention_mask=None):
         x = x + self.dropout(self.attn(x, attention_mask))
         x = x + self.dropout(self.bilinear(x))
@@ -261,6 +339,8 @@ class ModelConfig:
     n_head: int = 4
     dropout: float = 0.1
     model_type: str = 'transformer_1L' # e.g., 'attention_only_1L', 'transformer_2L'
+    use_mixer: bool = False  # Use BilinearMixer instead of QuadraticAttention
+    mixer_r: int = None  # Rank/heads for mixer (defaults to n_head if None)
 
 # --- Cleaned-up and Completed ToyTransformer Class ---
 
@@ -285,12 +365,22 @@ class ToyTransformer(nn.Module):
         layer_match = re.search(r'(\d+)L', config.model_type)
         num_layers = int(layer_match.group(1)) if layer_match else 1
 
-        if 'transformer' in config.model_type:
+        if 'embed_only' in config.model_type:
+            # No layers - just embedding and unembedding
+            pass
+        elif 'transformer' in config.model_type:
             for _ in range(num_layers):
-                layers.append(TransformerBlock(config.d_model, config.n_head, config.n_ctx, config.dropout))
+                layers.append(TransformerBlock(
+                    config.d_model, config.n_head, config.n_ctx, config.dropout,
+                    use_mixer=config.use_mixer, mixer_r=config.mixer_r
+                ))
         elif 'attention_only' in config.model_type:
             for _ in range(num_layers):
-                layers.append(QuadraticAttention(config.d_model, config.n_head, config.n_ctx))
+                if config.use_mixer:
+                    r = config.mixer_r if config.mixer_r is not None else config.n_head
+                    layers.append(BilinearMixer(seq_len=config.n_ctx, d_model=config.d_model, r=r, causal=True))
+                else:
+                    layers.append(QuadraticAttention(config.d_model, config.n_head, config.n_ctx))
                 # layers.append(nn.RMSNorm(config.d_model))
         
         self.layers = nn.ModuleList(layers)
@@ -298,10 +388,9 @@ class ToyTransformer(nn.Module):
         # Output head
         # self.ln_f = nn.RMSNorm(config.d_model)
         self.head = nn.Linear(config.d_model, config.vocab_size, bias=False)
-        
-        # Weight tying
-        self.head.weight = self.embed.weight
-        
+
+        # No weight tying - head and embedding are independent
+
         # Initialize weights
         self.apply(self._init_weights)
 
@@ -334,7 +423,7 @@ class ToyTransformer(nn.Module):
         
         # Forward through the layers
         for layer in self.layers:
-            if isinstance(layer, (TransformerBlock, QuadraticAttention)):
+            if isinstance(layer, (TransformerBlock, QuadraticAttention, BilinearMixer)):
                 x = layer(x, attention_mask)
             else:
                 x = layer(x) 

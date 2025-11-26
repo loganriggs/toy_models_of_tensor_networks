@@ -13,9 +13,17 @@ This repository implements toy transformer models using bilinear layers and quad
 The main model implementation uses:
 - **QuadraticAttention**: Attention mechanism using quadratic scoring (`(q·k)²`) instead of softmax
 - **BilinearLayer**: Element-wise product of two linear projections (similar to SwiGLU without gating)
-- **ToyTransformer**: Flexible transformer supporting `attention_only_1L`, `attention_only_2L`, `transformer_1L`, `transformer_2L` configurations
+- **BilinearMixer**: Sequence mixing via bilinear operations with separate L/R matrices, can replace attention
+- **ToyTransformer**: Flexible transformer supporting `attention_only_1L`, `attention_only_2L`, `transformer_1L`, `transformer_2L`, `embed_only` configurations
 - **Muon Optimizer**: Memory-efficient optimizer with ~1.5x better sample efficiency than Adam
 - **RoPE (Rotary Positional Embeddings)**: Used instead of learned positional embeddings
+
+### BilinearMixerTransformer (`bilinear_mixer_transformer.py`)
+
+A separate transformer architecture using combined token and feature mixing:
+- **BilinearMixerTransformerBlock**: Computes `y = (T_l @ x @ F_l^T) * (T_r @ x @ F_r^T)` where T matrices handle token mixing and F matrices handle feature mixing
+- Combines "attention" (token mixing) and "MLP" (feature mixing) in one unified bilinear operation
+- Configurable via `BilinearMixerConfig` with `n_heads` (rank) and `n_layers`
 
 ### Tokenization (`tokenization/tokenization.py`)
 
@@ -51,26 +59,35 @@ pip install -r requirements.txt
 
 ### Training Models
 
-Train models using the Python script with command-line options:
+Train models using the Python script in `scripts/toy_transformer_trainer.py`:
 ```bash
 # Train on SimpleStories (default, 4096 vocab)
-python toy_transformer_trainer.py --dataset simplestories --model_type attention_only_1L
+python scripts/toy_transformer_trainer.py --dataset simplestories --model_type attention_only_1L
 
-# Train on TinyStories (10k vocab)
-python toy_transformer_trainer.py --dataset tinystories --model_type transformer_1L
+# Train with BilinearMixer replacing attention
+python scripts/toy_transformer_trainer.py --dataset simplestories --model_type attention_only_1L \
+    --use_mixer --mixer_r 2
 
-# Train on FineWeb (GPT-2 tokenizer, 50257 vocab)
-python toy_transformer_trainer.py --dataset fineweb --model_type transformer_2L
+# Train BilinearMixerTransformer (combined token+feature mixing)
+python scripts/toy_transformer_trainer.py --model_type bilinear_mixer \
+    --n_layers 1 --n_head 4 --d_model 256 --n_ctx 128
 
-# Additional options
-python toy_transformer_trainer.py --dataset simplestories \
+# Train embed-only baseline (no attention or MLP)
+python scripts/toy_transformer_trainer.py --model_type embed_only
+
+# With wandb logging
+python scripts/toy_transformer_trainer.py --model_type bilinear_mixer --wandb \
+    --wandb_project my-project --wandb_run_name my-run
+
+# Full example with all options
+python scripts/toy_transformer_trainer.py --dataset simplestories \
     --model_type attention_only_1L \
-    --batch_size 32 \
+    --batch_size 256 \
     --learning_rate 3e-3 \
-    --max_iters 10000
-
-# Or use Jupyter notebooks
-jupyter notebook toy_trainer.ipynb
+    --num_batches 50000 \
+    --d_model 256 \
+    --n_ctx 128 \
+    --wandb
 ```
 
 Available datasets:
@@ -80,13 +97,20 @@ Available datasets:
 
 ### Model Configurations
 
-Models are configured via `ModelConfig` dataclass:
-- `model_type`: `'attention_only_1L'`, `'attention_only_2L'`, `'transformer_1L'`, `'transformer_2L'`
+**ToyTransformer** uses `ModelConfig` dataclass:
+- `model_type`: `'attention_only_1L'`, `'attention_only_2L'`, `'transformer_1L'`, `'transformer_2L'`, `'embed_only'`
 - `vocab_size`: Tokenizer vocabulary size (10000 for TinyStories, 4096 for SimpleStories)
 - `d_model`: Model dimension (e.g., 512)
 - `n_head`: Number of attention heads
 - `n_ctx`: Context window length
 - `dropout`: Dropout rate
+- `use_mixer`: Replace attention with BilinearMixer
+- `mixer_r`: Rank for BilinearMixer (defaults to n_head)
+
+**BilinearMixerTransformer** uses `BilinearMixerConfig`:
+- `n_heads`: Number of bilinear "heads" (rank of the interaction)
+- `n_layers`: Number of BilinearMixerTransformerBlocks
+- `d_model`, `n_ctx`, `vocab_size`, `dropout`: Same as above
 
 ### Loading Trained Models
 
@@ -140,7 +164,13 @@ This creates polynomial (degree-2) attention patterns amenable to tensor network
 - Linear layers: Normal initialization (std=0.02)
 - Output projections: Zero-initialized for stability (muP-like)
 - Embeddings: Normal initialization (std=0.02)
-- Weight tying: Embedding and output head share weights
+- No weight tying: Embedding and output head have independent weights
+
+## Scripts
+
+- `scripts/toy_transformer_trainer.py`: Main training script with CLI arguments for all model types
+- `scripts/compare_models.py`: Compare CE loss across different trained models (cell-format for Jupyter)
+- `scripts/test_mixer.py`: Test script for BilinearMixer implementation
 
 ## Notebooks
 

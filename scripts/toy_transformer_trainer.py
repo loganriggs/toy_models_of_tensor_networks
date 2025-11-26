@@ -4,10 +4,12 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils import ModelConfig, TrainingConfig, StreamingTextDataset, Trainer, ToyTransformer
+from bilinear_mixer_transformer import BilinearMixerTransformer, BilinearMixerConfig
 import json
 import torch
 import argparse
 import numpy as np
+import wandb
 
 # Get the root directory (parent of scripts/)
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -48,6 +50,15 @@ parser.add_argument('--batch_size', type=int, default=16, help='Batch size')
 parser.add_argument('--learning_rate', type=float, default=3e-3, help='Learning rate')
 parser.add_argument('--num_batches', type=int, default=10000, help='Number of training batches')
 parser.add_argument('--debug', action='store_true', help='Run in debug mode (100 batches)')
+parser.add_argument('--d_model', type=int, default=512, help='Model dimension')
+parser.add_argument('--n_ctx', type=int, default=512, help='Context length / sequence length')
+parser.add_argument('--n_head', type=int, default=8, help='Number of attention heads')
+parser.add_argument('--use_mixer', action='store_true', help='Use BilinearMixer instead of attention')
+parser.add_argument('--mixer_r', type=int, default=None, help='Rank for BilinearMixer (defaults to n_head)')
+parser.add_argument('--n_layers', type=int, default=1, help='Number of layers (for bilinear_mixer model)')
+parser.add_argument('--wandb', action='store_true', help='Enable wandb logging')
+parser.add_argument('--wandb_project', type=str, default='toy-transformers', help='Wandb project name')
+parser.add_argument('--wandb_run_name', type=str, default=None, help='Wandb run name (auto-generated if not provided)')
 args = parser.parse_args()
 
 # Override settings for debug mode
@@ -67,15 +78,33 @@ print(f"  Dataset: {dataset_config['dataset_name']}")
 print(f"  Tokenizer: {dataset_config['tokenizer_name']}")
 print(f"  Vocab size: {dataset_config['vocab_size']}")
 
-# Configure model
-model_config = ModelConfig(
-    model_type=args.model_type,
-    vocab_size=dataset_config['vocab_size'],
-    d_model=512,  # Moderate size for experiments
-    n_head=8,
-    n_ctx=512,  # Shorter context for faster training
-    dropout=0.1
-)
+# Configure model based on model_type
+use_bilinear_mixer_transformer = args.model_type == 'bilinear_mixer'
+
+if use_bilinear_mixer_transformer:
+    # Use BilinearMixerTransformer with its own config
+    model_config = BilinearMixerConfig(
+        vocab_size=dataset_config['vocab_size'],
+        d_model=args.d_model,
+        n_ctx=args.n_ctx,
+        n_heads=args.n_head,
+        n_layers=args.n_layers,
+        dropout=0.1,
+    )
+    seq_length = model_config.n_ctx
+else:
+    # Use ToyTransformer with ModelConfig
+    model_config = ModelConfig(
+        model_type=args.model_type,
+        vocab_size=dataset_config['vocab_size'],
+        d_model=args.d_model,
+        n_head=args.n_head,
+        n_ctx=args.n_ctx,
+        dropout=0.1,
+        use_mixer=args.use_mixer,
+        mixer_r=args.mixer_r
+    )
+    seq_length = model_config.n_ctx
 
 training_config = TrainingConfig(
     model_config=model_config,
@@ -92,7 +121,7 @@ train_dataset = StreamingTextDataset(
     subset=dataset_config['subset'],
     split='train',
     tokenizer_name=dataset_config['tokenizer_name'],
-    seq_length=model_config.n_ctx,
+    seq_length=seq_length,
     validation_ratio=0.001  # 0.1% for validation
 )
 
@@ -101,16 +130,47 @@ val_dataset = StreamingTextDataset(
     subset=dataset_config['subset'],
     split='validation',
     tokenizer_name=dataset_config['tokenizer_name'],
-    seq_length=model_config.n_ctx,
+    seq_length=seq_length,
     validation_ratio=0.001  # Same ratio to ensure consistent split
 )
 
 
 # Create model
-model = ToyTransformer(model_config)
-print(f"Model type: {model_config.model_type}")
-print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+if use_bilinear_mixer_transformer:
+    model = BilinearMixerTransformer(model_config)
+    print(f"Model type: bilinear_mixer ({model_config.n_layers}L, {model_config.n_heads}H)")
+    model_type_str = f'bilinear_mixer_{model_config.n_layers}L_{model_config.n_heads}H'
+else:
+    model = ToyTransformer(model_config)
+    print(f"Model type: {model_config.model_type}")
+    model_type_str = model_config.model_type
+    if model_config.use_mixer:
+        model_type_str += f'_mixer_r{model_config.mixer_r or model_config.n_head}'
 
+num_params = sum(p.numel() for p in model.parameters())
+print(f"Parameters: {num_params:,}")
+
+# Initialize wandb if enabled
+if args.wandb:
+    wandb_run_name = args.wandb_run_name or f'{args.dataset}_{model_type_str}_{args.num_batches}batches'
+    wandb_config = {
+        'dataset': args.dataset,
+        'model_type': model_type_str,
+        'd_model': args.d_model,
+        'n_ctx': args.n_ctx,
+        'n_head': args.n_head,
+        'n_layers': args.n_layers,
+        'batch_size': args.batch_size,
+        'learning_rate': args.learning_rate,
+        'num_batches': args.num_batches,
+        'num_params': num_params,
+    }
+    wandb.init(project=args.wandb_project, name=wandb_run_name, config=wandb_config)
+    print(f"Wandb logging enabled: {args.wandb_project}/{wandb_run_name}")
+
+# Compile model for faster training
+print("Compiling model with torch.compile()...")
+model = torch.compile(model)
 
 # Create trainer
 trainer = Trainer(model, training_config)
@@ -140,6 +200,8 @@ for iter in range(args.num_batches):
     # Logging
     if iter % training_config.log_interval == 0:
         print(f"Iter {iter}: loss={loss:.4f}, lr={lr:.6f}")
+        if args.wandb:
+            wandb.log({'train_loss': loss, 'learning_rate': lr, 'iter': iter})
         
     # Evaluation
     if iter % training_config.eval_interval == 0 and iter > 0:
@@ -156,6 +218,8 @@ for iter in range(args.num_batches):
         val_iters.append(iter)
 
         print(f"Validation loss: {val_loss_mean:.4f}")
+        if args.wandb:
+            wandb.log({'val_loss': val_loss_mean, 'iter': iter})
 
         # Generate sample text
         model.eval()
@@ -185,20 +249,25 @@ if len(val_losses) > 0:
 
 plt.xlabel('Iteration')
 plt.ylabel('Loss')
-plt.title(f'Training Curves: {args.dataset} - {model_config.model_type} ({args.num_batches} batches)')
+
+# Use pre-computed model_type_str for filename suffix
+model_name_suffix = model_type_str
+plot_title = f'Training Curves: {args.dataset} - {model_type_str} ({args.num_batches} batches)'
+
+plt.title(plot_title)
 plt.legend()
 plt.grid(True, alpha=0.3)
 plt.tight_layout()
 
 # Save plot to figures folder
-plot_filename = os.path.join(ROOT_DIR, 'figures', f'training_curves_{args.dataset}_{model_config.model_type}_{args.num_batches}batches.png')
+plot_filename = os.path.join(ROOT_DIR, 'figures', f'training_curves_{args.dataset}_{model_name_suffix}_{args.num_batches}batches.png')
 plt.savefig(plot_filename, dpi=150)
 print(f"Training curves saved to {plot_filename}")
 plt.close()
 
 # Save model with dataset name and batch count in filename
-model_filename = os.path.join(ROOT_DIR, 'models', f'toy_transformer_{args.dataset}_{model_config.model_type}_{args.num_batches}batches.pt')
-config_filename = os.path.join(ROOT_DIR, 'configs', f'{args.dataset}_{model_config.model_type}_{args.num_batches}batches_config.json')
+model_filename = os.path.join(ROOT_DIR, 'models', f'toy_transformer_{args.dataset}_{model_name_suffix}_{args.num_batches}batches.pt')
+config_filename = os.path.join(ROOT_DIR, 'configs', f'{args.dataset}_{model_name_suffix}_{args.num_batches}batches_config.json')
 
 torch.save(model.state_dict(), model_filename)
 print(f"Model saved to {model_filename}")
@@ -219,3 +288,8 @@ config_dict = {**model_config_dict, **training_info}
 with open(config_filename, 'w') as f:
     json.dump(config_dict, f, indent=2)
 print(f"Config saved to {config_filename}")
+
+# Finish wandb run
+if args.wandb:
+    wandb.finish()
+    print("Wandb run finished")
