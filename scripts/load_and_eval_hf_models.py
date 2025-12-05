@@ -90,14 +90,14 @@ dataset = StreamingTextDataset(
 print("Dataset ready.")
 
 # %%
-def evaluate_model(model, dataset, num_batches: int = 50, batch_size: int = 32):
+def evaluate_model(model, dataset, num_batches: int = 50, batch_size: int = 32, device: str = "cuda"):
     """Evaluate a model on the dataset, returning mean CE loss."""
     model.eval()
     losses = []
 
     with torch.no_grad():
         for _ in range(num_batches):
-            x, y = dataset.get_batch(batch_size)
+            x, y = dataset.get_batch(batch_size, device=device)
             attention_mask = torch.ones_like(x)
 
             _, loss = model(x, attention_mask)
@@ -115,7 +115,7 @@ for model_name, model_data in models.items():
     model = model_data['model']
     reported_loss = model_data['training_info']['final_val_loss']
 
-    mean_loss, std_loss = evaluate_model(model, dataset, NUM_EVAL_BATCHES, BATCH_SIZE)
+    mean_loss, std_loss = evaluate_model(model, dataset, NUM_EVAL_BATCHES, BATCH_SIZE, DEVICE)
     results[model_name] = {'mean': mean_loss, 'std': std_loss}
 
     print(f"\n{model_name}:")
