@@ -107,7 +107,7 @@ class BilinearMixerTransformerBlock(nn.Module):
         # Normalize by number of heads to keep scale consistent
         y = y / self.n_heads
         
-        return x + y
+        return x + self.dropout(y)
 
 
 class BilinearMixerTransformer(nn.Module):

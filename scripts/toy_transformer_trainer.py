@@ -1,5 +1,6 @@
 import sys
 import os
+import time
 # Add parent directory to path to import utils
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -44,10 +45,11 @@ parser = argparse.ArgumentParser(description='Train toy transformer models')
 parser.add_argument('--dataset', type=str, default='simplestories',
                     choices=['fineweb', 'simplestories', 'tinystories'],
                     help='Dataset to use for training')
-parser.add_argument('--model_type', type=str, default='attention_only_1L',
-                    help='Model architecture type (e.g., transformer_10L, attention_only_2L)')
+parser.add_argument('--model_type', type=str, default='transformer',
+                    choices=['transformer', 'attention_only', 'embed_only', 'bilinear_mixer'],
+                    help='Model architecture type')
 parser.add_argument('--batch_size', type=int, default=16, help='Batch size')
-parser.add_argument('--learning_rate', type=float, default=3e-3, help='Learning rate')
+parser.add_argument('--learning_rate', type=float, default=0.01, help='Starting learning rate (linear decay to min_lr in second half)')
 parser.add_argument('--num_batches', type=int, default=10000, help='Number of training batches')
 parser.add_argument('--debug', action='store_true', help='Run in debug mode (100 batches)')
 parser.add_argument('--d_model', type=int, default=512, help='Model dimension')
@@ -55,7 +57,10 @@ parser.add_argument('--n_ctx', type=int, default=512, help='Context length / seq
 parser.add_argument('--n_head', type=int, default=8, help='Number of attention heads')
 parser.add_argument('--use_mixer', action='store_true', help='Use BilinearMixer instead of attention')
 parser.add_argument('--mixer_r', type=int, default=None, help='Rank for BilinearMixer (defaults to n_head)')
-parser.add_argument('--n_layers', type=int, default=1, help='Number of layers (for bilinear_mixer model)')
+parser.add_argument('--use_softmax', action='store_true', help='Use standard softmax attention instead of quadratic')
+parser.add_argument('--use_bilinear_attn', action='store_true', help='Use CausalBilinearSelfAttention')
+parser.add_argument('--bilinear_attn_qk_norm', action='store_true', help='Use RMS norm on QK matrices in CausalBilinearSelfAttention')
+parser.add_argument('--n_layers', type=int, default=1, help='Number of layers')
 parser.add_argument('--wandb', action='store_true', help='Enable wandb logging')
 parser.add_argument('--wandb_project', type=str, default='toy-transformers', help='Wandb project name')
 parser.add_argument('--wandb_run_name', type=str, default=None, help='Wandb run name (auto-generated if not provided)')
@@ -99,10 +104,14 @@ else:
         vocab_size=dataset_config['vocab_size'],
         d_model=args.d_model,
         n_head=args.n_head,
+        n_layer=args.n_layers,
         n_ctx=args.n_ctx,
         dropout=0.1,
         use_mixer=args.use_mixer,
-        mixer_r=args.mixer_r
+        mixer_r=args.mixer_r,
+        use_softmax=args.use_softmax,
+        use_bilinear_attn=args.use_bilinear_attn,
+        bilinear_attn_qk_norm=args.bilinear_attn_qk_norm
     )
     seq_length = model_config.n_ctx
 
@@ -142,10 +151,12 @@ if use_bilinear_mixer_transformer:
     model_type_str = f'bilinear_mixer_{model_config.n_layers}L_{model_config.n_heads}H'
 else:
     model = ToyTransformer(model_config)
-    print(f"Model type: {model_config.model_type}")
-    model_type_str = model_config.model_type
+    print(f"Model type: {model_config.model_type} ({model_config.n_layer}L)")
+    model_type_str = f'{model_config.model_type}_{model_config.n_layer}L'
     if model_config.use_mixer:
         model_type_str += f'_mixer_r{model_config.mixer_r or model_config.n_head}'
+    if model_config.use_bilinear_attn:
+        model_type_str += '_bilinear_attn'
 
 num_params = sum(p.numel() for p in model.parameters())
 print(f"Parameters: {num_params:,}")
@@ -174,6 +185,7 @@ model = torch.compile(model)
 
 # Create trainer
 trainer = Trainer(model, training_config)
+trainer.total_iterations = args.num_batches  # Set for LR warmdown schedule
 
 # Training loop
 print(f"Starting training for {args.num_batches} batches...")
@@ -184,6 +196,12 @@ train_iters = []
 val_losses = []
 val_iters = []
 
+# Track tokens and timing
+tokens_per_batch = args.batch_size * seq_length
+total_tokens = 0
+start_time = time.time()
+last_log_time = start_time
+
 for iter in range(args.num_batches):
     # Get batch of real data
     x, y = train_dataset.get_batch(training_config.batch_size)
@@ -191,26 +209,40 @@ for iter in range(args.num_batches):
     attention_mask = torch.ones_like(x)
 
     # Train step
-    loss, lr = trainer.train_step(x, attention_mask)
+    loss, lr, grad_norm = trainer.train_step(x, attention_mask)
 
-    # Track training loss
+    # Track training loss and tokens
     train_losses.append(loss)
     train_iters.append(iter)
+    total_tokens += tokens_per_batch
 
     # Logging
     if iter % training_config.log_interval == 0:
-        print(f"Iter {iter}: loss={loss:.4f}, lr={lr:.6f}")
+        current_time = time.time()
+        elapsed_since_last = current_time - last_log_time
+        iters_per_sec = training_config.log_interval / elapsed_since_last if elapsed_since_last > 0 else 0
+        last_log_time = current_time
+
+        print(f"Iter {iter}: loss={loss:.4f}, lr={lr:.6f}, grad_norm={grad_norm:.4f}, it/s={iters_per_sec:.2f}, tokens={total_tokens:,}")
         if args.wandb:
-            wandb.log({'train_loss': loss, 'learning_rate': lr, 'iter': iter})
+            wandb.log({
+                'train_loss': loss,
+                'learning_rate': lr,
+                'grad_norm': grad_norm,
+                'iter': iter,
+                'total_tokens': total_tokens,
+                'iters_per_sec': iters_per_sec
+            })
         
     # Evaluation
     if iter % training_config.eval_interval == 0 and iter > 0:
         val_losses_batch = []
-        for _ in range(20):  # Evaluate on 20 batches
-            x_val, y_val = val_dataset.get_batch(training_config.batch_size)
-            attention_mask_val = torch.ones_like(x_val)
-            _, val_loss = model(x_val, attention_mask_val)
-            val_losses_batch.append(val_loss.item())
+        with torch.no_grad():
+            for _ in range(20):  # Evaluate on 20 batches
+                x_val, y_val = val_dataset.get_batch(training_config.batch_size)
+                attention_mask_val = torch.ones_like(x_val)
+                _, val_loss = model(x_val, attention_mask_val)
+                val_losses_batch.append(val_loss.item())
         val_loss_mean = np.mean(val_losses_batch)
 
         # Track validation loss
@@ -222,11 +254,11 @@ for iter in range(args.num_batches):
             wandb.log({'val_loss': val_loss_mean, 'iter': iter})
 
         # Generate sample text
-        model.eval()
-        context = torch.zeros((1, 1), dtype=torch.long, device='cuda')
-        generated = model.generate(context, max_new_tokens=100, temperature=0.8)
-        print(f"Sample generation: {train_dataset.tokenizer.decode(generated[0].tolist())}")
-        model.train()
+        # model.eval()
+        # context = torch.zeros((1, 1), dtype=torch.long, device='cuda')
+        # generated = model.generate(context, max_new_tokens=100, temperature=0.8)
+        # print(f"Sample generation: {train_dataset.tokenizer.decode(generated[0].tolist())}")
+        # model.train()
 
 print("Training complete!")
 
