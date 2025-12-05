@@ -140,7 +140,7 @@ print("\n" + "=" * 60)
 print("SAMPLE INFERENCE")
 print("=" * 60)
 
-x, y = dataset.get_batch(4)
+x, y = dataset.get_batch(4, device=DEVICE)
 attention_mask = torch.ones_like(x)
 
 for model_name, model_data in models.items():
