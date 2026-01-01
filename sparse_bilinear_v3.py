@@ -1,3 +1,4 @@
+# %%
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -1228,6 +1229,13 @@ def channel_mask_svd_demo():
     acc = eval_acc(model, test_loader, device=device)
     print("test acc:", acc)
 
+    # Save model weights
+    import os
+    os.makedirs("weights", exist_ok=True)
+    save_path = f"weights/bilinear_resnet_fashion_h{model.blocks[0].hidden_dim}_b{len(model.blocks)}.pt"
+    torch.save(model.state_dict(), save_path)
+    print(f"Model weights saved to {save_path}")
+
     # collect channel masks
     M = collect_channel_mask_matrix(
         model,
@@ -1591,6 +1599,86 @@ for layer_idx in range(num_layers):
     fig.colorbar(im, ax=ax, shrink=0.8)
 
 plt.tight_layout()
+plt.show()
+
+#%%
+# Vertically stacked: Class graph on top, then layer interactions (highest layer first)
+# For layer_idx=0, shows how D_proj flows through all subsequent layers to output
+
+layer_idx = 0  # Which layer's D_proj to analyze
+num_layers = len(model.blocks)
+head = model.head.weight.detach().cpu()
+d = model.blocks[layer_idx].D.weight.detach().cpu()
+
+# FashionMNIST class names
+class_names = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat',
+               'Sandal', 'Shirt', 'Sneaker', 'Bag', 'Ankle boot']
+
+# 1. Class graph (head @ D) - this goes on top
+class_data = head @ d
+class_abs_max = max(abs(class_data.max().item()), abs(class_data.min().item()))
+class_vmin, class_vmax = -class_abs_max, class_abs_max
+
+# 2. Layer interactions in reverse order (highest layer first)
+layer_data = []
+for next_layer_idx in range(num_layers - 1, layer_idx, -1):
+    u2 = model.blocks[next_layer_idx].L.weight.detach().cpu()
+    v2 = model.blocks[next_layer_idx].R.weight.detach().cpu()
+    int_data = ((d.T @ u2.T) * (d.T @ v2.T)).T
+    y_labels = [f"L{next_layer_idx}: h{i}" for i in range(u2.shape[0])]
+    layer_data.append((f'Layer {next_layer_idx}', int_data, y_labels))
+
+# Compute layer-specific color scaling
+layer_max = max(data.max().item() for _, data, _ in layer_data)
+layer_min = min(data.min().item() for _, data, _ in layer_data)
+layer_abs_max = max(abs(layer_max), abs(layer_min))
+layer_vmin, layer_vmax = -layer_abs_max, layer_abs_max
+
+# Create vertically stacked subplots (1 column) with extra space on right for colorbars
+n_plots = 1 + len(layer_data)
+fig, axes = plt.subplots(n_plots, 1, figsize=(12, 3 * n_plots), sharex=True)
+fig.suptitle(f"D_proj at layer {layer_idx} → subsequent layers → output classes", fontsize=14)
+fig.subplots_adjust(right=0.85)  # Make room for colorbars on right
+
+if n_plots == 1:
+    axes = [axes]
+
+# Plot class graph (top)
+ax = axes[0]
+im_class = ax.imshow(class_data, cmap="RdBu", vmin=class_vmin, vmax=class_vmax, aspect='auto')
+ax.set_ylabel('Classes')
+ax.set_yticks(range(len(class_names)))
+ax.set_yticklabels(class_names)
+ax.set_yticks([y - 0.5 for y in range(1, len(class_names))], minor=True)
+ax.set_xticks([x - 0.5 for x in range(1, d.shape[1])], minor=True)
+ax.grid(which='minor', color='gray', linestyle='-', linewidth=0.5)
+
+# Plot layer interactions
+for plot_idx, (title, data, y_labels) in enumerate(layer_data):
+    ax = axes[plot_idx + 1]
+    im_layer = ax.imshow(data, cmap="RdBu", vmin=layer_vmin, vmax=layer_vmax, aspect='auto')
+    ax.set_ylabel(title)
+    ax.set_yticks(range(len(y_labels)))
+    ax.set_yticklabels(y_labels)
+    ax.set_yticks([y - 0.5 for y in range(1, len(y_labels))], minor=True)
+    ax.set_xticks([x - 0.5 for x in range(1, d.shape[1])], minor=True)
+    ax.grid(which='minor', color='gray', linestyle='-', linewidth=0.5)
+
+# X-axis labels only on the bottom subplot
+d_dim = d.shape[1]
+axes[-1].set_xticks(range(d_dim))
+axes[-1].set_xticklabels([f"d{i}" for i in range(d_dim)])
+axes[-1].set_xlabel("D_proj channels")
+
+# Two colorbars on the right side
+cbar_ax1 = fig.add_axes([0.88, 0.55, 0.02, 0.35])  # [left, bottom, width, height]
+cbar1 = fig.colorbar(im_class, cax=cbar_ax1)
+cbar1.set_label("Class strength")
+
+cbar_ax2 = fig.add_axes([0.88, 0.1, 0.02, 0.35])
+cbar2 = fig.colorbar(im_layer, cax=cbar_ax2)
+cbar2.set_label("Layer interaction")
+
 plt.show()
 
 #%%
