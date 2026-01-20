@@ -958,8 +958,9 @@ def analyze_spatial_patterns(all_h, layer=0):
     x_cm = (h_abs * x_pos).sum(dim=(0, 1)) / (total_mass + 1e-8)
 
     # Spread (variance around center of mass)
-    y_spread = (h_abs * (y_pos.squeeze(-1) - y_cm) ** 2).sum(dim=(0, 1)) / (total_mass + 1e-8)
-    x_spread = (h_abs * (x_pos.squeeze(-1) - x_cm) ** 2).sum(dim=(0, 1)) / (total_mass + 1e-8)
+    # y_pos is [8, 8, 1], y_cm is [hidden_dim] -> need [1, 1, hidden_dim] for broadcast
+    y_spread = (h_abs * (y_pos - y_cm.view(1, 1, -1)) ** 2).sum(dim=(0, 1)) / (total_mass + 1e-8)
+    x_spread = (h_abs * (x_pos - x_cm.view(1, 1, -1)) ** 2).sum(dim=(0, 1)) / (total_mass + 1e-8)
 
     locality = 1.0 / (y_spread + x_spread + 1e-8)
 
