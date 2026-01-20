@@ -4,6 +4,71 @@ Attribution Analysis Script
 
 Interactive analysis of frozen-RMS trained model.
 Run cells individually to explore attributions and ablations.
+
+=============================================================================
+FUNCTION REFERENCE TABLE
+=============================================================================
+
+CORE FUNCTIONS (attribution & ablation):
+  get_attribution(x, y)                    - Get frozen-RMS attribution for one image
+  get_all_logits(x)                        - Get model predictions for all classes
+  ablate_channel(x, y, layer, patch, ch)   - Zero one channel, get new logit
+  ablate_multiple_channels(x, y, list)     - Zero multiple channels at once
+  get_top_channels(all_attr, k=20)         - Find top-k channels by |attribution|
+  verify_attribution(x, y, top_k=10)       - Compare attribution vs actual ablation effect
+
+VISUALIZATION:
+  show_image(x)                            - Display CIFAR image (undo normalization)
+  plot_attribution_heatmap(all_attr, layer)- 8x8 heatmap of attribution per patch
+  plot_channel_histogram(all_attr, layer)  - Histogram of attribution values
+
+DISTRIBUTION PLOTS:
+  plot_channel_distributions(all_attr, all_h, channels=None, n_channels=20, n_per_plot=5)
+                                           - Histograms of attr & h, 5 per subplot
+  plot_attribution_vs_activation_scatter() - Scatter: attr vs h for top channels
+
+FIRING MASKS:
+  compute_firing_masks(all_h, method)      - Binary masks: 'threshold'/'percentile'/'sign'/'significant'
+  compute_firing_rate(masks)               - Fraction of patches where channel fires
+
+CO-FIRING CORRELATION:
+  compute_cofire_correlation(all_h, method)- Channel correlation: 'continuous'/'binary'/'jaccard'
+  compute_signed_cofire(all_h)             - Same-sign vs opposite-sign co-firing
+  plot_cofire_matrix(corr)                 - Visualize correlation matrix
+
+CAUSAL CONNECTIVITY (from weights, no data needed):
+  compute_causal_connectivity()            - Get D norms, channel→class effects from weights
+  plot_channel_class_effects(connectivity) - Heatmap of channel effects on classes
+  plot_top_channels_per_class(connectivity)- Bar charts: top promote/suppress per class
+  print_top_channels_per_class(connectivity)- Text printout of above
+
+SPATIAL PATTERNS (where in the 8x8 patch grid a channel fires):
+  analyze_spatial_patterns(all_h)          - Stats: variance, x/y correlation, locality
+  plot_channel_spatial_pattern(all_h, ch)  - 8x8 heatmap of one channel's spatial pattern
+  plot_multiple_spatial_patterns(all_h)    - Grid of spatial patterns for many channels
+
+CLUSTERING:
+  cluster_channels(all_attr, all_h, n_clusters, feature)
+                                           - KMeans clustering by 'activation'/'attribution'/'combined'
+  analyze_clusters(labels, connectivity)   - Print cluster→class associations
+
+FEATURE GROUPS BY CLASS:
+  find_feature_groups_by_class(n_samples)  - Which channels matter for each class (uses data)
+  plot_class_channel_importance(class_imp) - Heatmap of class→channel importance
+  find_class_specific_channels(class_imp)  - Find channels specific to one class
+
+INTERPRETATION WORKFLOW:
+  interpret_single_image(idx)              - Full analysis workflow for one image
+  analyze_channel_across_dataset(ch, n)    - How one channel behaves across many images
+  analyze_layer1_channel_sources(all_h, ch)- Which L0 channels correlate with L1 channel
+  plot_layer1_sources(all_h, ch)           - Visualize L0→L1 connections
+
+BATCH STATISTICS:
+  analyze_batch(indices)                   - Analyze multiple samples
+  quick_stats(n_samples=50)                - Hoyer sparsity, attribution error across batch
+  get_delta_values(all_h)                  - Compute ||D[:,k]|| * |h_k| for each channel
+
+=============================================================================
 """
 
 import torch
@@ -1366,10 +1431,175 @@ def quick_stats(n_samples=50):
 
 
 # %%
-# === EXAMPLE USAGE ===
+# =============================================================================
+# EXAMPLES - Uncomment and run any section
+# =============================================================================
 
-# Uncomment to run:
-interpret_single_image(0)
-quick_stats(50)
-connectivity = compute_causal_connectivity()
-plot_channel_class_effects(connectivity, layer=0)
+# -----------------------------------------------------------------------------
+# EXAMPLE 1: Basic attribution for one image
+# -----------------------------------------------------------------------------
+# x, y = test_dataset[0]  # Get first test image
+# show_image(x, f"Class: {CLASSES[y]}")
+#
+# # Get attribution
+# full_logit, all_attr, all_h = get_attribution(x, y)
+# print(f"Logit for {CLASSES[y]}: {full_logit:.3f}")
+# print(f"Layer 0 attribution sum: {all_attr[0].sum():.3f}")
+# print(f"Layer 1 attribution sum: {all_attr[1].sum():.3f}")
+#
+# # Show top channels
+# top = get_top_channels(all_attr, k=10)
+# for ch in top:
+#     print(f"  L{ch['layer']} P{ch['patch']} Ch{ch['channel']}: {ch['attr']:.4f}")
+
+# -----------------------------------------------------------------------------
+# EXAMPLE 2: Verify attribution accuracy (should be <0.1 error)
+# -----------------------------------------------------------------------------
+# x, y = test_dataset[0]
+# results, full_logit = verify_attribution(x, y, top_k=5)
+# print(f"\nAttribution vs Ablation for top 5 channels:")
+# for r in results:
+#     print(f"  Ch {r['channel']}: attr={r['attr']:.4f}, ablation={r['ablation_effect']:.4f}, error={r['error']:.6f}")
+
+# -----------------------------------------------------------------------------
+# EXAMPLE 3: Distribution plots (histograms of attr & h)
+# -----------------------------------------------------------------------------
+# x, y = test_dataset[0]
+# _, all_attr, all_h = get_attribution(x, y)
+#
+# # Top 20 channels, 5 per plot (4 subplots)
+# plot_channel_distributions(all_attr, all_h, layer=0)
+#
+# # Specific channels you want to see
+# plot_channel_distributions(all_attr, all_h, channels=[0, 10, 20, 30, 40])
+#
+# # More channels per plot
+# plot_channel_distributions(all_attr, all_h, n_channels=30, n_per_plot=10)
+
+# -----------------------------------------------------------------------------
+# EXAMPLE 4: Causal connectivity from weights (no data needed)
+# -----------------------------------------------------------------------------
+# connectivity = compute_causal_connectivity()
+#
+# # Print top channels per class (text)
+# print_top_channels_per_class(connectivity, layer=0, top_k=5)
+#
+# # Bar charts showing promote/suppress channels per class
+# plot_top_channels_per_class(connectivity, layer=0, top_k=10)
+#
+# # Heatmap version
+# plot_channel_class_effects(connectivity, layer=0, top_k=30)
+
+# -----------------------------------------------------------------------------
+# EXAMPLE 5: Spatial patterns (where in image does channel fire?)
+# -----------------------------------------------------------------------------
+# x, y = test_dataset[0]
+# _, all_attr, all_h = get_attribution(x, y)
+#
+# # Single channel spatial pattern
+# plot_channel_spatial_pattern(all_h, layer=0, channel=0)
+#
+# # Grid of 16 channels with highest spatial variance
+# plot_multiple_spatial_patterns(all_h, layer=0, n_channels=16)
+#
+# # Specific channels
+# plot_multiple_spatial_patterns(all_h, layer=0, channels=[0, 5, 10, 15, 20, 25])
+#
+# # Analyze spatial statistics
+# spatial = analyze_spatial_patterns(all_h, layer=0)
+# print(f"Channel 0: y_corr={spatial['y_corr'][0]:.3f}, x_corr={spatial['x_corr'][0]:.3f}")
+
+# -----------------------------------------------------------------------------
+# EXAMPLE 6: Co-firing correlation
+# -----------------------------------------------------------------------------
+# x, y = test_dataset[0]
+# _, all_attr, all_h = get_attribution(x, y)
+#
+# # Continuous correlation (Pearson)
+# corr = compute_cofire_correlation(all_h, layer=0, method='continuous')
+# plot_cofire_matrix(corr, title='Continuous Co-firing', top_k=30)
+#
+# # Jaccard similarity of firing masks
+# corr_jaccard = compute_cofire_correlation(all_h, layer=0, method='jaccard')
+# plot_cofire_matrix(corr_jaccard, title='Jaccard Co-firing', top_k=30)
+
+# -----------------------------------------------------------------------------
+# EXAMPLE 7: Firing masks
+# -----------------------------------------------------------------------------
+# x, y = test_dataset[0]
+# _, _, all_h = get_attribution(x, y)
+#
+# # Different methods
+# masks_thresh = compute_firing_masks(all_h, method='threshold', threshold=0.1)
+# masks_pct = compute_firing_masks(all_h, method='percentile', percentile=90)
+# masks_sign = compute_firing_masks(all_h, method='sign')  # h > 0
+#
+# # Firing rate per channel
+# rates = compute_firing_rate(masks_thresh)
+# print(f"Layer 0 firing rates: min={rates[0].min():.3f}, max={rates[0].max():.3f}")
+
+# -----------------------------------------------------------------------------
+# EXAMPLE 8: Clustering channels
+# -----------------------------------------------------------------------------
+# x, y = test_dataset[0]
+# _, all_attr, all_h = get_attribution(x, y)
+# connectivity = compute_causal_connectivity()
+#
+# # Cluster by activation patterns
+# labels, centers = cluster_channels(all_attr, all_h, layer=0, n_clusters=10, feature='activation')
+#
+# # Analyze what each cluster represents
+# analyze_clusters(labels, connectivity, layer=0)
+
+# -----------------------------------------------------------------------------
+# EXAMPLE 9: Feature groups by class (uses multiple samples)
+# -----------------------------------------------------------------------------
+# # This takes a minute - analyzes 100 samples
+# class_importance = find_feature_groups_by_class(n_samples=100)
+#
+# # Heatmap of which channels matter for each class
+# plot_class_channel_importance(class_importance, layer=0, top_k=30)
+#
+# # Find channels specific to certain classes
+# specific = find_class_specific_channels(class_importance, layer=0, threshold=2.0)
+# for cls, channels in specific.items():
+#     if channels:
+#         print(f"{cls}: channels {channels}")
+
+# -----------------------------------------------------------------------------
+# EXAMPLE 10: Full interpretation workflow for one image
+# -----------------------------------------------------------------------------
+# interpret_single_image(0)  # Sample index 0
+
+# -----------------------------------------------------------------------------
+# EXAMPLE 11: Analyze one channel across the dataset
+# -----------------------------------------------------------------------------
+# # See how channel 50 behaves across 100 images
+# activations, attributions, classes = analyze_channel_across_dataset(
+#     channel=50, layer=0, n_samples=100
+# )
+
+# -----------------------------------------------------------------------------
+# EXAMPLE 12: Layer 0 → Layer 1 connections
+# -----------------------------------------------------------------------------
+# x, y = test_dataset[0]
+# _, _, all_h = get_attribution(x, y)
+#
+# # Which L0 channels correlate with L1 channel 50?
+# plot_layer1_sources(all_h, channel_l1=50, top_k=10)
+
+# -----------------------------------------------------------------------------
+# EXAMPLE 13: Quick batch statistics
+# -----------------------------------------------------------------------------
+# stats = quick_stats(n_samples=50)
+# print(f"Mean attribution error: {np.mean(stats['errors']):.6f}")
+
+# -----------------------------------------------------------------------------
+# EXAMPLE 14: Attribution heatmaps (per-patch attribution)
+# -----------------------------------------------------------------------------
+# x, y = test_dataset[0]
+# _, all_attr, _ = get_attribution(x, y)
+#
+# # Show where in the image attribution is concentrated
+# plot_attribution_heatmap(all_attr, layer=0, title=f"Layer 0 - {CLASSES[y]}")
+# plot_attribution_heatmap(all_attr, layer=1, title=f"Layer 1 - {CLASSES[y]}")
