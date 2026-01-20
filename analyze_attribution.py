@@ -419,20 +419,39 @@ for li, d in enumerate(deltas):
 # DISTRIBUTION PLOTS
 # =============================================================================
 
-def plot_channel_distributions(all_attr, all_h, layer=0, n_channels=20, n_per_plot=5):
+def plot_channel_distributions(all_attr, all_h, layer=0, channels=None, n_channels=20, n_per_plot=5):
     """
-    Plot distributions of attributions and activations for top channels.
+    Plot distributions of attributions and activations for channels.
 
-    Shows 5 channels at a time on the same plot with alpha transparency.
+    Args:
+        all_attr, all_h: from get_attribution()
+        layer: which layer
+        channels: list of specific channel indices to plot, or None for top channels
+        n_channels: how many channels total (if channels=None, uses top by attribution)
+        n_per_plot: how many channels per subplot (overlaid with alpha)
+
+    Example:
+        # Top 20 channels, 5 per plot (4 plots)
+        plot_channel_distributions(all_attr, all_h, layer=0)
+
+        # Specific channels
+        plot_channel_distributions(all_attr, all_h, channels=[0, 5, 10, 15, 20])
+
+        # Top 30, 10 per plot
+        plot_channel_distributions(all_attr, all_h, n_channels=30, n_per_plot=10)
     """
     attr = all_attr[layer]  # [n_patches, hidden_dim]
     h = all_h[layer]
 
-    # Get top channels by attribution magnitude (summed over patches)
-    channel_attr_sum = attr.abs().sum(dim=0)  # [hidden_dim]
-    top_channels = channel_attr_sum.argsort(descending=True)[:n_channels].cpu().numpy()
+    if channels is None:
+        # Get top channels by attribution magnitude (summed over patches)
+        channel_attr_sum = attr.abs().sum(dim=0)  # [hidden_dim]
+        channels = channel_attr_sum.argsort(descending=True)[:n_channels].cpu().numpy()
+    else:
+        channels = np.array(channels)
 
-    n_plots = (n_channels + n_per_plot - 1) // n_per_plot
+    n_total = len(channels)
+    n_plots = (n_total + n_per_plot - 1) // n_per_plot
     colors = plt.cm.tab10(np.linspace(0, 1, n_per_plot))
 
     # Attribution distributions
@@ -442,35 +461,35 @@ def plot_channel_distributions(all_attr, all_h, layer=0, n_channels=20, n_per_pl
 
     for plot_idx in range(n_plots):
         start = plot_idx * n_per_plot
-        end = min(start + n_per_plot, n_channels)
-        channels = top_channels[start:end]
+        end = min(start + n_per_plot, n_total)
+        plot_channels = channels[start:end]
 
         # Attribution histogram
         ax = axes[plot_idx, 0]
-        for i, ch in enumerate(channels):
+        for i, ch in enumerate(plot_channels):
             attr_ch = attr[:, ch].cpu().numpy()
             ax.hist(attr_ch, bins=30, alpha=0.4, color=colors[i], label=f'Ch {ch}')
         ax.set_xlabel('Attribution')
         ax.set_ylabel('Count')
-        ax.set_title(f'Layer {layer} Attribution Distribution (Ch {start}-{end-1})')
+        ax.set_title(f'Layer {layer} Attribution Distribution')
         ax.legend(fontsize=8)
         ax.axvline(0, color='k', linestyle='--', alpha=0.3)
 
         # Activation histogram
         ax = axes[plot_idx, 1]
-        for i, ch in enumerate(channels):
+        for i, ch in enumerate(plot_channels):
             h_ch = h[:, ch].cpu().numpy()
             ax.hist(h_ch, bins=30, alpha=0.4, color=colors[i], label=f'Ch {ch}')
         ax.set_xlabel('Activation (h)')
         ax.set_ylabel('Count')
-        ax.set_title(f'Layer {layer} Activation Distribution (Ch {start}-{end-1})')
+        ax.set_title(f'Layer {layer} Activation Distribution')
         ax.legend(fontsize=8)
         ax.axvline(0, color='k', linestyle='--', alpha=0.3)
 
     plt.tight_layout()
     plt.show()
 
-    return top_channels
+    return channels
 
 
 def plot_attribution_vs_activation_scatter(all_attr, all_h, layer=0, n_channels=5):
@@ -694,6 +713,7 @@ def compute_causal_connectivity():
 def plot_channel_class_effects(connectivity, layer=0, top_k=20):
     """
     Plot which classes each channel promotes/suppresses.
+    (Original heatmap version)
     """
     channel_to_class = connectivity['channel_to_class'][layer]  # [n_classes, hidden_dim]
 
@@ -717,19 +737,132 @@ def plot_channel_class_effects(connectivity, layer=0, top_k=20):
     return top_channels
 
 
+def plot_top_channels_per_class(connectivity, layer=0, top_k=10):
+    """
+    For each class, show the top-k most positive and top-k most negative channels.
+
+    Creates a grid where each row is a class, showing:
+    - Left side: top-k channels that PROMOTE this class (positive effect)
+    - Right side: top-k channels that SUPPRESS this class (negative effect)
+
+    Each cell shows channel ID and effect value.
+    """
+    channel_to_class = connectivity['channel_to_class'][layer]  # [n_classes, hidden_dim]
+
+    fig, axes = plt.subplots(10, 2, figsize=(16, 20))
+
+    results = {}
+
+    for class_idx in range(10):
+        class_name = CLASSES[class_idx]
+        effects = channel_to_class[class_idx]  # [hidden_dim]
+
+        # Top positive (promote this class)
+        top_pos_idx = effects.argsort(descending=True)[:top_k]
+        top_pos_vals = effects[top_pos_idx]
+
+        # Top negative (suppress this class)
+        top_neg_idx = effects.argsort()[:top_k]
+        top_neg_vals = effects[top_neg_idx]
+
+        results[class_name] = {
+            'promote': list(zip(top_pos_idx.tolist(), top_pos_vals.tolist())),
+            'suppress': list(zip(top_neg_idx.tolist(), top_neg_vals.tolist())),
+        }
+
+        # Plot positive channels
+        ax = axes[class_idx, 0]
+        colors = plt.cm.Reds(np.linspace(0.3, 0.9, top_k))
+        bars = ax.barh(range(top_k), top_pos_vals.numpy(), color=colors)
+        ax.set_yticks(range(top_k))
+        ax.set_yticklabels([f'Ch {ch}' for ch in top_pos_idx.numpy()])
+        ax.set_xlabel('Effect')
+        ax.set_title(f'{class_name}: PROMOTE', fontweight='bold')
+        ax.invert_yaxis()
+
+        # Add value labels
+        for i, (ch, val) in enumerate(zip(top_pos_idx, top_pos_vals)):
+            ax.text(val + 0.01, i, f'{val:.2f}', va='center', fontsize=8)
+
+        # Plot negative channels
+        ax = axes[class_idx, 1]
+        colors = plt.cm.Blues(np.linspace(0.3, 0.9, top_k))
+        bars = ax.barh(range(top_k), top_neg_vals.numpy(), color=colors)
+        ax.set_yticks(range(top_k))
+        ax.set_yticklabels([f'Ch {ch}' for ch in top_neg_idx.numpy()])
+        ax.set_xlabel('Effect')
+        ax.set_title(f'{class_name}: SUPPRESS', fontweight='bold')
+        ax.invert_yaxis()
+
+        # Add value labels
+        for i, (ch, val) in enumerate(zip(top_neg_idx, top_neg_vals)):
+            ax.text(val - 0.01, i, f'{val:.2f}', va='center', ha='right', fontsize=8)
+
+    plt.suptitle(f'Layer {layer}: Top Channels per Class (from weights)', fontsize=14, y=1.01)
+    plt.tight_layout()
+    plt.show()
+
+    return results
+
+
+def print_top_channels_per_class(connectivity, layer=0, top_k=5):
+    """
+    Print top channels per class in a readable format.
+    """
+    channel_to_class = connectivity['channel_to_class'][layer]
+
+    print(f"\nLayer {layer}: Top {top_k} channels per class (from W_u @ D)")
+    print("=" * 70)
+
+    for class_idx in range(10):
+        class_name = CLASSES[class_idx]
+        effects = channel_to_class[class_idx]
+
+        top_pos_idx = effects.argsort(descending=True)[:top_k]
+        top_neg_idx = effects.argsort()[:top_k]
+
+        pos_str = ', '.join([f'{ch}({effects[ch]:.2f})' for ch in top_pos_idx])
+        neg_str = ', '.join([f'{ch}({effects[ch]:.2f})' for ch in top_neg_idx])
+
+        print(f"\n{class_name:12s}")
+        print(f"  Promote:  {pos_str}")
+        print(f"  Suppress: {neg_str}")
+
+
 # %%
 # =============================================================================
 # SPATIAL PATTERNS
 # =============================================================================
+#
+# EXPLANATION: The image is divided into 8x8 = 64 patches. Each channel has an
+# activation value at each patch. The "spatial pattern" shows WHERE in the image
+# a channel fires.
+#
+# Example interpretations:
+# - A channel that fires only in top-left patches might detect "top-left corner features"
+# - A channel that fires uniformly everywhere detects "global features"
+# - A channel with high activation in center might detect "center of object"
+#
+# This helps understand if channels are spatially localized or global.
 
 def analyze_spatial_patterns(all_h, layer=0):
     """
-    Analyze within-patch vs cross-patch activation patterns.
+    Analyze spatial activation patterns across the 8x8 patch grid.
 
-    Returns:
-    - spatial_corr: [8, 8, hidden_dim] correlation with spatial position
-    - patch_variance: [hidden_dim] variance across patches per channel
-    - channel_locality: [hidden_dim] how localized each channel is
+    The image is 32x32 pixels divided into 8x8 = 64 patches (4x4 pixels each).
+    Each channel has an activation at each patch. This function analyzes
+    WHERE in the image each channel fires.
+
+    Returns dict with:
+    - patch_variance: [hidden_dim] - how much activation varies across patches
+      (high = spatially selective, low = fires everywhere equally)
+    - y_corr: [hidden_dim] - correlation with vertical position
+      (positive = fires more at bottom, negative = fires more at top)
+    - x_corr: [hidden_dim] - correlation with horizontal position
+      (positive = fires more at right, negative = fires more at left)
+    - locality: [hidden_dim] - how concentrated the activation is
+      (high = fires in small region, low = fires everywhere)
+    - y_cm, x_cm: [hidden_dim] - center of mass of activation (0-7 range)
     """
     h = all_h[layer]  # [n_patches=64, hidden_dim=128]
 
@@ -777,20 +910,71 @@ def analyze_spatial_patterns(all_h, layer=0):
 
 def plot_channel_spatial_pattern(all_h, layer=0, channel=0):
     """
-    Plot spatial activation pattern for a single channel.
+    Plot WHERE in the image a channel fires (8x8 heatmap).
+
+    The 32x32 image is divided into 8x8 patches. This shows the channel's
+    activation at each patch location.
+
+    Red = positive activation (channel fires)
+    Blue = negative activation
+    White = near zero
+
+    Example: If a channel detects "wheels", you'd see high activation
+    at the bottom of car images where wheels typically appear.
     """
     h = all_h[layer]  # [64, 128]
     h_ch = h[:, channel].reshape(8, 8).cpu().numpy()
 
     plt.figure(figsize=(5, 4))
-    plt.imshow(h_ch, cmap='RdBu_r', aspect='equal')
+    vmax = max(abs(h_ch.min()), abs(h_ch.max()))
+    plt.imshow(h_ch, cmap='RdBu_r', aspect='equal', vmin=-vmax, vmax=vmax)
     plt.colorbar(label='Activation')
-    plt.title(f'Layer {layer}, Channel {channel} Spatial Pattern')
-    plt.xlabel('X')
-    plt.ylabel('Y')
+    plt.title(f'Layer {layer}, Channel {channel}\n(where in image it fires)')
+    plt.xlabel('X (left→right)')
+    plt.ylabel('Y (top→bottom)')
     plt.show()
 
     return h_ch
+
+
+def plot_multiple_spatial_patterns(all_h, layer=0, channels=None, n_channels=16):
+    """
+    Plot spatial patterns for multiple channels in a grid.
+    """
+    h = all_h[layer]
+
+    if channels is None:
+        # Use channels with highest variance (most spatially interesting)
+        variance = h.var(dim=0)
+        channels = variance.argsort(descending=True)[:n_channels].cpu().numpy()
+    else:
+        channels = np.array(channels)
+
+    n = len(channels)
+    cols = min(4, n)
+    rows = (n + cols - 1) // cols
+
+    fig, axes = plt.subplots(rows, cols, figsize=(3*cols, 3*rows))
+    axes = np.array(axes).flatten()
+
+    for i, ch in enumerate(channels):
+        ax = axes[i]
+        h_ch = h[:, ch].reshape(8, 8).cpu().numpy()
+        vmax = max(abs(h_ch.min()), abs(h_ch.max()), 0.01)
+        im = ax.imshow(h_ch, cmap='RdBu_r', aspect='equal', vmin=-vmax, vmax=vmax)
+        ax.set_title(f'Ch {ch}', fontsize=10)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    # Hide empty subplots
+    for i in range(len(channels), len(axes)):
+        axes[i].axis('off')
+
+    plt.suptitle(f'Layer {layer}: Spatial Activation Patterns', fontsize=12)
+    plt.tight_layout()
+    plt.show()
+
+    return channels
 
 
 # %%
@@ -1185,7 +1369,7 @@ def quick_stats(n_samples=50):
 # === EXAMPLE USAGE ===
 
 # Uncomment to run:
-# interpret_single_image(0)
-# quick_stats(50)
-# connectivity = compute_causal_connectivity()
-# plot_channel_class_effects(connectivity, layer=0)
+interpret_single_image(0)
+quick_stats(50)
+connectivity = compute_causal_connectivity()
+plot_channel_class_effects(connectivity, layer=0)
