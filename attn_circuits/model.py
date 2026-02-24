@@ -246,7 +246,7 @@ def zeropower_via_svd(G, steps=None):
     return U @ V.T
 
 
-@torch.compile
+@torch.compile(disable=True)  # torch.compile causes segfaults with subprocess pool
 def zeropower_via_newtonschulz5(G, steps=10, eps=1e-7):
     assert len(G.shape) == 2
     a, b, c = (3.4445, -4.7750, 2.0315)
