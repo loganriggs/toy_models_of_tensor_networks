@@ -402,6 +402,316 @@ for i, cat in enumerate(CAT_NAMES):
 
 # %%
 # ========================================================================
+# PHASE 2b: ZOOMED CIRCUIT ANALYSIS PER RULE
+# ========================================================================
+# For each rule type, extract the specific token submatrices from QK/OV
+# and show what the responsible head actually encodes.
+print("\n" + "=" * 70)
+print("PHASE 2b: ZOOMED CIRCUIT ANALYSIS PER RULE")
+print("=" * 70)
+
+
+def plot_submatrix(mat, row_tokens, col_tokens, title, save_name, annotate=True):
+    """Plot a submatrix extracted from a full V×V circuit matrix."""
+    if torch.is_tensor(mat):
+        mat = mat.cpu().numpy()
+    fig, ax = plt.subplots(figsize=(max(4, len(col_tokens) * 0.55), max(3, len(row_tokens) * 0.45)))
+    vmax = max(abs(mat.min()), abs(mat.max()), 0.01)
+    im = ax.imshow(mat, cmap='RdBu_r', vmin=-vmax, vmax=vmax, aspect='auto')
+    ax.set_xticks(range(len(col_tokens)))
+    ax.set_xticklabels(col_tokens, rotation=45, ha='right', fontsize=8)
+    ax.set_yticks(range(len(row_tokens)))
+    ax.set_yticklabels(row_tokens, fontsize=8)
+    ax.set_title(title, fontsize=9)
+    fig.colorbar(im, ax=ax, shrink=0.8)
+    if annotate and len(row_tokens) <= 16 and len(col_tokens) <= 16:
+        for i in range(len(row_tokens)):
+            for j in range(len(col_tokens)):
+                val = mat[i, j]
+                if abs(val) > vmax * 0.15:
+                    ax.text(j, i, f'{val:.2f}', ha='center', va='center', fontsize=6,
+                            color='white' if abs(val) > vmax * 0.5 else 'black')
+    fig.tight_layout()
+    path = os.path.join(FIG_DIR, save_name)
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
+
+
+def extract_submat(full_mat, row_ids, col_ids):
+    """Extract a submatrix from a V×V matrix given row and column token IDs."""
+    if torch.is_tensor(full_mat):
+        full_mat = full_mat.cpu().numpy()
+    return full_mat[np.ix_(row_ids, col_ids)]
+
+
+# Helper: token IDs for each category
+cat_ids = {}
+for cat_name, bound_start, bound_end in zip(CAT_NAMES, CAT_BOUNDS[:-1], CAT_BOUNDS[1:]):
+    cat_ids[cat_name] = list(range(bound_start, bound_end))
+
+nouns = gen.categories['NOUN']
+noun_ids = [gen.token2id[t] for t in nouns]
+places = gen.categories['PLACE']
+place_ids = [gen.token2id[t] for t in places]
+verb_ts = gen.categories['VERB_T']
+verb_t_ids = [gen.token2id[t] for t in verb_ts]
+verb_is = gen.categories['VERB_I']
+verb_i_ids = [gen.token2id[t] for t in verb_is]
+funcs = gen.categories['FUNC']
+func_ids = [gen.token2id[t] for t in funcs]
+adjs = gen.categories['ADJ']
+adj_ids = [gen.token2id[t] for t in adjs]
+
+
+def plot_all_heads_grid(circuit_type, row_ids, col_ids, row_labels, col_labels,
+                        suptitle, save_name, annotate_thresh=0.15):
+    """Plot a 2×4 grid (layers × heads) of zoomed submatrices.
+
+    Args:
+        circuit_type: 'qk' or 'ov'
+        row_ids, col_ids: token IDs for rows/cols of the submatrix
+        row_labels, col_labels: token names
+        suptitle: figure title
+        save_name: filename
+    """
+    fig, axes = plt.subplots(N_LAYER, N_HEAD,
+        figsize=(3.5 * N_HEAD + 1.2, 3 * N_LAYER + 0.5),
+        squeeze=False, constrained_layout=True)
+
+    # Use shared colorscale across all panels
+    all_vals = []
+    for layer in range(N_LAYER):
+        for head in range(N_HEAD):
+            mat = circuits[f'L{layer}_{circuit_type}'][head]
+            sub = extract_submat(mat, row_ids, col_ids)
+            all_vals.append(sub)
+    global_vmax = max(max(abs(s.min()), abs(s.max())) for s in all_vals)
+    global_vmax = max(global_vmax, 0.01)
+
+    for layer in range(N_LAYER):
+        for head in range(N_HEAD):
+            ax = axes[layer][head]
+            sub = all_vals[layer * N_HEAD + head]
+            im = ax.imshow(sub, cmap='RdBu_r', vmin=-global_vmax, vmax=global_vmax, aspect='auto')
+            ax.set_title(f'L{layer}H{head}', fontsize=9)
+
+            if head == 0:
+                ax.set_yticks(range(len(row_labels)))
+                ax.set_yticklabels(row_labels, fontsize=7)
+            else:
+                ax.set_yticks([])
+
+            if layer == N_LAYER - 1:
+                ax.set_xticks(range(len(col_labels)))
+                ax.set_xticklabels(col_labels, rotation=45, ha='right', fontsize=7)
+            else:
+                ax.set_xticks([])
+
+            # Annotate strong values
+            if len(row_labels) <= 16 and len(col_labels) <= 16:
+                for i in range(len(row_labels)):
+                    for j in range(len(col_labels)):
+                        val = sub[i, j]
+                        if abs(val) > global_vmax * annotate_thresh:
+                            ax.text(j, i, f'{val:.1f}', ha='center', va='center', fontsize=5,
+                                    color='white' if abs(val) > global_vmax * 0.5 else 'black')
+
+    fig.colorbar(im, ax=axes, shrink=0.6, pad=0.02, label='Value')
+    fig.suptitle(suptitle, fontsize=11)
+    path = os.path.join(FIG_DIR, save_name)
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
+
+
+def plot_full_circuit_grid(query_ids, key_ids, output_ids,
+                           query_labels, key_labels, output_labels,
+                           suptitle, save_name):
+    """Plot QK×OV full circuit for all heads in a 2×4 grid."""
+    fig, axes = plt.subplots(N_LAYER, N_HEAD,
+        figsize=(3.5 * N_HEAD + 1.2, 3 * N_LAYER + 0.5),
+        squeeze=False, constrained_layout=True)
+
+    all_full = []
+    for layer in range(N_LAYER):
+        for head in range(N_HEAD):
+            qk = extract_submat(circuits[f'L{layer}_qk'][head], query_ids, key_ids)
+            ov = extract_submat(circuits[f'L{layer}_ov'][head], key_ids, output_ids)
+            full = qk @ ov
+            all_full.append(full)
+    global_vmax = max(max(abs(f.min()), abs(f.max())) for f in all_full)
+    global_vmax = max(global_vmax, 0.01)
+
+    for layer in range(N_LAYER):
+        for head in range(N_HEAD):
+            ax = axes[layer][head]
+            full = all_full[layer * N_HEAD + head]
+            im = ax.imshow(full, cmap='RdBu_r', vmin=-global_vmax, vmax=global_vmax, aspect='auto')
+            ax.set_title(f'L{layer}H{head}', fontsize=9)
+
+            if head == 0:
+                ax.set_yticks(range(len(query_labels)))
+                ax.set_yticklabels(query_labels, fontsize=7)
+            else:
+                ax.set_yticks([])
+
+            if layer == N_LAYER - 1:
+                ax.set_xticks(range(len(output_labels)))
+                ax.set_xticklabels(output_labels, rotation=45, ha='right', fontsize=7)
+            else:
+                ax.set_xticks([])
+
+            if len(query_labels) <= 16 and len(output_labels) <= 16:
+                for i in range(len(query_labels)):
+                    for j in range(len(output_labels)):
+                        val = full[i, j]
+                        if abs(val) > global_vmax * 0.15:
+                            ax.text(j, i, f'{val:.1f}', ha='center', va='center', fontsize=5,
+                                    color='white' if abs(val) > global_vmax * 0.5 else 'black')
+
+    fig.colorbar(im, ax=axes, shrink=0.6, pad=0.02, label='QK×OV')
+    fig.suptitle(suptitle, fontsize=11)
+    path = os.path.join(FIG_DIR, save_name)
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return path
+
+
+# --- 1. Direct path (no heads — just embed×unembed) ---
+print("\n--- Direct path: place_bigram (PLACE → FUNC) ---")
+sub = extract_submat(circuits['direct'], place_ids, func_ids)
+p = plot_submatrix(sub, places, funcs,
+    'Direct path: PLACE→FUNC (place bigrams)', 'zoom_direct_place_func.png')
+print(f"Saved: {p}")
+for place_tok, func_tok in gen.place_bigrams.items():
+    pid, fid = gen.token2id[place_tok], gen.token2id[func_tok]
+    val = circuits['direct'].cpu().numpy()[pid, fid]
+    row = circuits['direct'].cpu().numpy()[pid]
+    rank = (row >= val).sum()
+    print(f"  {place_tok}→{func_tok}: direct={val:.3f} (rank {rank}/{config.vocab_size})")
+
+print("\n--- Direct path: noun_bigram (NOUN → VERB_T) ---")
+sub = extract_submat(circuits['direct'], noun_ids, verb_t_ids)
+p = plot_submatrix(sub, nouns, verb_ts,
+    'Direct path: NOUN→VERB_T (noun bigrams)', 'zoom_direct_noun_verbt.png')
+print(f"Saved: {p}")
+for noun_tok, dist in gen.noun_bigram_dists.items():
+    nid = gen.token2id[noun_tok]
+    row = circuits['direct'].cpu().numpy()[nid]
+    verb_vals = [(v, row[gen.token2id[v]], p) for v, p in dist]
+    verb_str = ", ".join(f"{v}={val:.2f}({p:.0%})" for v, val, p in verb_vals)
+    print(f"  {noun_tok}: {verb_str}")
+
+
+# --- 2. tok_trigram: all heads QK on NOUN×FUNC, OV on FUNC×VERB_I ---
+# Rules like (the, alice→runs): QK[alice,the] should be high, OV[the,runs] should be high
+print("\n--- tok_trigram: all heads QK (NOUN→FUNC) ---")
+p = plot_all_heads_grid('qk', noun_ids, func_ids, nouns, funcs,
+    f'QK circuits zoomed: NOUN queries × FUNC keys (tok_trigram) — {MODEL_TAG}',
+    'zoom_allheads_qk_toktrigram.png')
+print(f"Saved: {p}")
+
+print("--- tok_trigram: all heads OV (FUNC→VERB_I) ---")
+p = plot_all_heads_grid('ov', func_ids, verb_i_ids, funcs, verb_is,
+    f'OV circuits zoomed: FUNC source → VERB_I output (tok_trigram) — {MODEL_TAG}',
+    'zoom_allheads_ov_toktrigram.png')
+print(f"Saved: {p}")
+
+print("--- tok_trigram: all heads full circuit QK×OV (NOUN × FUNC → VERB_I) ---")
+p = plot_full_circuit_grid(noun_ids, func_ids, verb_i_ids,
+    nouns, funcs, verb_is,
+    f'Full circuit QK×OV: NOUN × FUNC → VERB_I (tok_trigram) — {MODEL_TAG}',
+    'zoom_allheads_full_toktrigram.png')
+print(f"Saved: {p}")
+
+# Print tok_trigram rule verification
+for (prev2, prev), output in gen.tok_trigrams.items():
+    if prev2 in funcs and prev in nouns and output in verb_is:
+        qi = nouns.index(prev)
+        oi = verb_is.index(output)
+        # Check L0H0 (the known responsible head)
+        qk_val = circuits['L0_qk'][0].cpu().numpy()[gen.token2id[prev], gen.token2id[prev2]]
+        ov_val = circuits['L0_ov'][0].cpu().numpy()[gen.token2id[prev2], gen.token2id[output]]
+        print(f"  {prev2},{prev}→{output}: L0H0 QK={qk_val:.2f}, OV={ov_val:.2f}")
+
+
+# --- 3. skip_bigram: all heads QK on ADJ×PLACE, OV on PLACE×FUNC ---
+# Rules like (beach...big→at): QK[big,beach] high, OV[beach,at] high
+print("\n--- skip_bigram: all heads QK (ADJ→PLACE) ---")
+p = plot_all_heads_grid('qk', adj_ids, place_ids, adjs, places,
+    f'QK circuits zoomed: ADJ queries × PLACE keys (skip_bigram) — {MODEL_TAG}',
+    'zoom_allheads_qk_skipbigram.png')
+print(f"Saved: {p}")
+
+print("--- skip_bigram: all heads OV (PLACE→FUNC) ---")
+p = plot_all_heads_grid('ov', place_ids, func_ids, places, funcs,
+    f'OV circuits zoomed: PLACE source → FUNC output (skip_bigram) — {MODEL_TAG}',
+    'zoom_allheads_ov_skipbigram.png')
+print(f"Saved: {p}")
+
+print("--- skip_bigram: all heads full circuit QK×OV (ADJ × PLACE → FUNC) ---")
+p = plot_full_circuit_grid(adj_ids, place_ids, func_ids,
+    adjs, places, funcs,
+    f'Full circuit QK×OV: ADJ × PLACE → FUNC (skip_bigram) — {MODEL_TAG}',
+    'zoom_allheads_full_skipbigram.png')
+print(f"Saved: {p}")
+
+for (anchor, trigger), output in gen.skip_bigrams.items():
+    qk_val = circuits['L1_qk'][1].cpu().numpy()[gen.token2id[trigger], gen.token2id[anchor]]
+    ov_val = circuits['L1_ov'][1].cpu().numpy()[gen.token2id[anchor], gen.token2id[output]]
+    print(f"  {anchor}...{trigger}→{output}: L1H1 QK={qk_val:.2f}, OV={ov_val:.2f}")
+
+
+# --- 4. place_bigram: all heads QK and OV on PLACE×FUNC ---
+# Direct path handles the mapping, but L1 heads amplify
+print("\n--- place_bigram: all heads QK (PLACE×FUNC) ---")
+p = plot_all_heads_grid('qk', place_ids, func_ids, places, funcs,
+    f'QK circuits zoomed: PLACE × FUNC (place_bigram) — {MODEL_TAG}',
+    'zoom_allheads_qk_placebigram.png')
+print(f"Saved: {p}")
+
+print("--- place_bigram: all heads OV (PLACE→FUNC) ---")
+p = plot_all_heads_grid('ov', place_ids, func_ids, places, funcs,
+    f'OV circuits zoomed: PLACE source → FUNC output (place_bigram) — {MODEL_TAG}',
+    'zoom_allheads_ov_placebigram.png')
+print(f"Saved: {p}")
+
+
+# --- 5. paren_content: all heads on ADJ+NOUN tokens ---
+adj_noun_ids = adj_ids + noun_ids
+adj_noun_labels = adjs + nouns
+print("\n--- paren_content: all heads QK (ADJ+NOUN × ADJ+NOUN) ---")
+p = plot_all_heads_grid('qk', adj_noun_ids, adj_noun_ids, adj_noun_labels, adj_noun_labels,
+    f'QK circuits zoomed: ADJ+NOUN (paren_content) — {MODEL_TAG}',
+    'zoom_allheads_qk_paren.png')
+print(f"Saved: {p}")
+
+print("--- paren_content: all heads OV (ADJ+NOUN → ADJ+NOUN) ---")
+p = plot_all_heads_grid('ov', adj_noun_ids, adj_noun_ids, adj_noun_labels, adj_noun_labels,
+    f'OV circuits zoomed: ADJ+NOUN (paren_content) — {MODEL_TAG}',
+    'zoom_allheads_ov_paren.png')
+print(f"Saved: {p}")
+
+
+# --- 6. quote_content: all heads on VERB_I+FUNC tokens ---
+vi_func_ids = verb_i_ids + func_ids
+vi_func_labels = verb_is + funcs
+print("\n--- quote_content: all heads QK (VERB_I+FUNC × VERB_I+FUNC) ---")
+p = plot_all_heads_grid('qk', vi_func_ids, vi_func_ids, vi_func_labels, vi_func_labels,
+    f'QK circuits zoomed: VERB_I+FUNC (quote_content) — {MODEL_TAG}',
+    'zoom_allheads_qk_quote.png')
+print(f"Saved: {p}")
+
+print("--- quote_content: all heads OV (VERB_I+FUNC → VERB_I+FUNC) ---")
+p = plot_all_heads_grid('ov', vi_func_ids, vi_func_ids, vi_func_labels, vi_func_labels,
+    f'OV circuits zoomed: VERB_I+FUNC (quote_content) — {MODEL_TAG}',
+    'zoom_allheads_ov_quote.png')
+print(f"Saved: {p}")
+
+
+# %%
+# ========================================================================
 # PHASE 4: LOGIT ATTRIBUTION (exact decomposition)
 # ========================================================================
 print("\n" + "=" * 70)
