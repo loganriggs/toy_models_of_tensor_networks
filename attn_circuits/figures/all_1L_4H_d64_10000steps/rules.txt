@@ -1,0 +1,84 @@
+Model: BilinearGPT all_1L_4H_d64_10000steps
+Config: 1L 4H d=64 seq=64
+Parameters: 27904 | Steps: 10000
+
+Mixing weights:
+  bigram: 0.25
+  bracket: 0.01
+  induction: 0.2
+  noise: 0.1
+  skip_bigram: 0.22
+  trigram: 0.22
+
+Shared outputs:
+  X0: bigram(a->) | trigram(g,d->) | skip(g...#->)
+  X1: bigram(b->) | trigram(h,e->) | skip(h...@->)
+  X2: bigram(c->) | trigram($,f->) | skip(a...$->)
+
+Rules:
+  bigram_a_X0: a -> X0
+  bigram_b_X1: b -> X1
+  bigram_c_X2: c -> X2
+  bigram_d_B0: d -> B0
+  bigram_e_B1: e -> B1
+  bigram_f_B2: f -> B2
+  trigram_gd_X0: g, d -> X0
+  trigram_he_X1: h, e -> X1
+  trigram_dollar_f_X2: $, f -> X2
+  trigram_bang_a_T0: !, a -> T0
+  trigram_hash_b_T1: #, b -> T1
+  trigram_at_c_T2: @, c -> T2
+  skip_g_hash_X0: g ... # -> X0 (max_skip=4)
+  skip_h_at_X1: h ... @ -> X1 (max_skip=4)
+  skip_a_dollar_X2: a ... $ -> X2 (max_skip=4)
+  skip_b_bang_S0: b ... ! -> S0 (max_skip=4)
+  skip_c_hash_S1: c ... # -> S1 (max_skip=4)
+  skip_d_at_S2: d ... @ -> S2 (max_skip=4)
+  induction_a: a X ... a -> X (copy)
+  induction_b: b X ... b -> X (copy)
+  induction_c: c X ... c -> X (copy)
+  induction_d: d X ... d -> X (copy)
+  induction_e: e X ... e -> X (copy)
+  induction_f: f X ... f -> X (copy)
+  induction_g: g X ... g -> X (copy)
+  induction_h: h X ... h -> X (copy)
+  bracket_paren: ( content )
+
+Final per-rule losses:
+  bigram_a_X0              : 0.1821
+  bigram_b_X1              : 0.1682
+  bigram_c_X2              : 0.1603
+  bigram_d_B0              : 0.3217
+  bigram_e_B1              : 0.3325
+  bigram_f_B2              : 0.1664
+  bracket                  : 2.1743
+  induction_a              : 0.6577
+  induction_b              : 0.6407
+  induction_c              : 0.6471
+  induction_d              : 0.7431
+  induction_e              : 0.5259
+  induction_f              : 0.3610
+  induction_g              : 0.0423
+  induction_h              : 0.0448
+  noise                    : 4.1030
+  setup                    : 1.9733
+  skip_a_dollar_X2         : 0.0168
+  skip_b_bang_S0           : 0.0144
+  skip_c_hash_S1           : 0.0164
+  skip_d_at_S2             : 0.0170
+  skip_g_hash_X0           : 0.0192
+  skip_h_at_X1             : 0.0156
+  trigram_at_c_T2          : 0.9766
+  trigram_bang_a_T0        : 0.9653
+  trigram_dollar_f_X2      : 0.9381
+  trigram_gd_X0            : 0.9422
+  trigram_hash_b_T1        : 0.9708
+  trigram_he_X1            : 0.8911
+
+Example sequences (seq_len=64):
+  ) T0 h e B1[B] @ X1[S] g d X0[T] T2 h e[I] X1[T] d B0[B] g d[I] B0[I] e B1[B] a X0[B] a X0[B] h e[I] X1[T] g d[I] B0[I] $ f B2[B] d B0[I] a X0[I] ! a X0[B] # b T1[T] a X0[I] d B0[B] @ S2[S] $ f B2[B] e B1[B] ! a T0[T] d B0[I] B2 # b T1[T]
+  S2 h e X1[T] ([Br] c[Br] d[Br] )[Br] a X0[B] g d )[I] g d[I] )[I] e X1[I] a X0[B] b X1[B] g d[I] B0[B] b X1[B] h e X1[T] c X2[B] d B0[B] ([Br] a[Br] c[Br] c[Br] )[Br] T2 e X1[I] b X1[B] g d B0[I] d B0[I] ! a c[I] X2[B] $ X2[S] f B2[B] X1 f B2[B] h e B1[B] B0
+  B0 a X0[B] e B1[B] $ X2[S] c X2[B] # S1[S] ( c X2[B] e B1[B] h e B1[B] g d ([Br] a[Br] d[Br] )[Br] $ X2[S] h e[I] X1[T] # b X1[B] f B2[B] b X1[B] @ c T2[T] b X1[B] a X0[B] b X1[B] b X1[I] ([Br] b[Br] a[Br] d[Br] )[Br] g d B0[B] $ f X2[T] b X1[B] h e B1[B]
+  # b T1[T] $ f B2[B] a ([Br] b[Br] a[Br] a[Br] a[Br] )[Br] f B2[B] g d B0[B] c X2[B] d B0[B] X0 ([Br] b[Br] b[Br] a[Br] b[Br] )[Br] f B2[B] a X0[B] a X0[B] d B0[I] a X0[I] b )[I] e B1[B] ( d B0[I] f B2[B] b X1[B] S1 # b X1[B] b X1[I] c X2[B] f B2[I] h e B1[B] b
+  ( f B2[B] ! a X0[B] c X2[B] a X0[I] g d B0[B] a X0[I] a X0[I] h e B1[B] @ X1[S] $ f X2[T] h e[I] B1[B] ! a X0[B] b X1[B] c X2[B] # S1[S] g d B0[B] h e[I] X1[T] g d[I] X0[T] a X0[B] c X2[I] h e[I] X1[I] c X2[B] c X2[B] g d[I] X0[I] S1 h e[I] X1[I]
+  Legend: [B]=bigram [T]=trigram [S]=skip-bigram [I]=induction [Br]=bracket, unlabeled=setup/noise

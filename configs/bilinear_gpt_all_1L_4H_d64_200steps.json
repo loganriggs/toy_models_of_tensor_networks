@@ -1,0 +1,42 @@
+{
+  "vocab_size": 25,
+  "n_layer": 1,
+  "n_head": 4,
+  "n_embd": 64,
+  "seq_len": 64,
+  "mlp_hidden": 512,
+  "block_has_mlp": [
+    false
+  ],
+  "use_rmsnorm": false,
+  "use_qk_norm": false,
+  "use_final_norm": false,
+  "batch_size": 128,
+  "lr": 0.003,
+  "num_steps": 200,
+  "warmup_steps": 200,
+  "eval_interval": 50,
+  "log_interval": 10,
+  "rules": "all",
+  "mode": "mixed",
+  "seed": 42,
+  "debug": true,
+  "wandb": false,
+  "wandb_project": "attn-circuits",
+  "wandb_run_name": null,
+  "num_params": 27776,
+  "final_train_loss": 2.301450490951538,
+  "final_val_loss": 2.3395522117614744,
+  "final_rule_losses": {
+    "noise": 2.8600923201370323,
+    "bigram_c_z": 1.8509809411193858,
+    "bracket": 1.7769700414321994,
+    "bigram_a_x": 1.7682261979228857,
+    "induction_f": 2.7005192369594475,
+    "bigram_b_y": 1.8773048431513433,
+    "induction_e": 2.668664592303857,
+    "skip_d_at_r": 1.2077486147198986,
+    "trigram_hash_a_p": 6.196740234891573,
+    "trigram_hash_b_q": 6.096340737601584
+  }
+}

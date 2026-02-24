@@ -1,0 +1,61 @@
+Model: BilinearGPT depth1_1L_4H_d64_200steps
+Config: 1L 4H d=64 seq=64
+Parameters: 27,904
+Training: 200 steps, batch=128, lr=0.003
+Rules: depth1 (mixed mode)
+
+Mixing weights:
+  bigram: 0.38
+  noise: 0.01
+  skip_bigram: 0.3
+  trigram: 0.31
+
+Rules:
+  bigram_a_X0: a -> X0
+  bigram_b_X1: b -> X1
+  bigram_c_X2: c -> X2
+  bigram_d_B0: d -> B0
+  bigram_e_B1: e -> B1
+  bigram_f_B2: f -> B2
+  trigram_gd_X0: g, d -> X0
+  trigram_he_X1: h, e -> X1
+  trigram_dollar_f_X2: $, f -> X2
+  trigram_bang_a_T0: !, a -> T0
+  trigram_hash_b_T1: #, b -> T1
+  trigram_at_c_T2: @, c -> T2
+  skip_g_hash_X0: g ... # -> X0 (max_skip=4)
+  skip_h_at_X1: h ... @ -> X1 (max_skip=4)
+  skip_a_dollar_X2: a ... $ -> X2 (max_skip=4)
+  skip_b_bang_S0: b ... ! -> S0 (max_skip=4)
+  skip_c_hash_S1: c ... # -> S1 (max_skip=4)
+  skip_d_at_S2: d ... @ -> S2 (max_skip=4)
+
+Final per-rule losses:
+  bigram_a_X0              : 0.1465
+  bigram_b_X1              : 0.1398
+  bigram_c_X2              : 0.1295
+  bigram_d_B0              : 0.2678
+  bigram_e_B1              : 0.3246
+  bigram_f_B2              : 0.2047
+  noise                    : 4.7935
+  setup                    : 1.9114
+  skip_a_dollar_X2         : 1.0451
+  skip_b_bang_S0           : 1.0782
+  skip_c_hash_S1           : 1.2578
+  skip_d_at_S2             : 0.8832
+  skip_g_hash_X0           : 2.0876
+  skip_h_at_X1             : 2.1002
+  trigram_at_c_T2          : 2.2739
+  trigram_bang_a_T0        : 2.1648
+  trigram_dollar_f_X2      : 1.9209
+  trigram_gd_X0            : 1.5712
+  trigram_hash_b_T1        : 2.2589
+  trigram_he_X1            : 1.3704
+
+Example sequences:
+  X2 d B0[B] h e B1[B] # b X1[B] h e B1[B] g d B0[B] @ S2[S] # b X1[B] a X0[B] d B0[B] b X1[B] a X0[B] ! S0[S] c X2[B] c X2[B] a X0[B] ! a X0[B] h e X1[T] # b X1[B] ! S0[S] a X0[B] h e B1[B] e B1[B] h e B1[B] g d B0[B] c X2[B] @ S2[S]
+  T2 f B2[B] b X1[B] d B0[B] ! S0[S] c X2[B] d B0[B] a X0[B] b X1[B] ! S0[S] b X1[B] f B2[B] # b T1[T] g d X0[T] @ S2[S] h e B1[B] c X2[B] f B2[B] $ f B2[B] a X0[B] c X2[B] a X0[B] g d B0[B] @ S2[S] ! a X0[B] g d X0[T] a X0[B] c X2[B] b X1[B]
+  S1 b X1[B] ! S0[S] c X2[B] h e B1[B] # b T1[T] h e X1[T] f B2[B] d B0[B] a X0[B] ! a X0[B] d B0[B] g d B0[B] @ S2[S] e B1[B] ! a T0[T] c X2[B] h e X1[T] e B1[B] h e B1[B] @ X1[S] d B0[B] e B1[B] a X0[B] c X2[B] a X0[B] @ c X2[B] d B0[B]
+  ) b X1[B] f B2[B] d B0[B] h e B1[B] $ f X2[T] d B0[B] ! a T0[T] b X1[B] d B0[B] # b X1[B] h e X1[T] d B0[B] f B2[B] $ f X2[T] # b X1[B] c X2[B] d B0[B] a X0[B] h e B1[B] $ f X2[T] ! a X0[B] $ X2[S] a X0[B] g d B0[B] # X0[S] h e
+  d B0[B] # b X1[B] b X1[B] ! S0[S] g d B0[B] e B1[B] d B0[B] @ S2[S] h e B1[B] @ X1[S] g d B0[B] # X0[S] h e B1[B] f B2[B] $ f B2[B] a X0[B] d B0[B] e B1[B] c X2[B] @ c T2[T] # S1[S] g d B0[B] $ f X2[T] h e B1[B] h e B1[B] $ f X2[T]
+  Legend: [B]=bigram [T]=trigram [S]=skip-bigram [I]=induction [Br]=bracket, unlabeled=setup/noise

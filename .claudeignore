@@ -1,0 +1,5 @@
+tn_venv/
+wandb/
+data/
+models/
+outputs/
